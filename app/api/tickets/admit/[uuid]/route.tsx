@@ -59,99 +59,92 @@ export async function GET(
   // Check if this is a full UUID (36 chars with dashes) or partial
   const isFullUUID = uuid.length === 36;
 
+  // Custom error to carry HTTP status out of the transaction callback
+  class AdmitError extends Error {
+    constructor(
+      public readonly httpStatus: number,
+      message: string,
+    ) {
+      super(message);
+    }
+  }
+
   try {
-    // Start transaction
-    await sql.query("BEGIN");
+    const txResult = await sql.transaction(async (tx) => {
+      // Lock matching row(s) to prevent concurrent admission attempts
+      // Use exact match for full UUID, prefix match for partial
+      let lockResult;
+      if (isFullUUID) {
+        lockResult = await tx`
+          SELECT * FROM attendees WHERE uuid = ${uuid} FOR UPDATE LIMIT 2`;
+      } else {
+        // Partial UUID: match prefix safely using LEFT(...) and limit locked rows
+        lockResult = await tx`
+          SELECT * FROM attendees
+             WHERE LEFT(uuid::text, ${uuid.length}) = ${uuid}
+             FOR UPDATE
+             LIMIT 2`;
+      }
 
-    // Lock matching row(s) to prevent concurrent admission attempts
-    // Use exact match for full UUID, prefix match for partial
-    let lockResult;
-    if (isFullUUID) {
-      lockResult = await sql`
-        SELECT * FROM attendees WHERE uuid = ${uuid} FOR UPDATE LIMIT 2`;
-    } else {
-      // Partial UUID: match prefix safely using LEFT(...) and limit locked rows
-      lockResult = await sql`
-        SELECT * FROM attendees
-           WHERE LEFT(uuid::text, ${uuid.length}) = ${uuid}
-           FOR UPDATE
-           LIMIT 2`;
-    }
+      if (lockResult.length === 0) {
+        throw new AdmitError(404, "Applicant not found.");
+      }
 
-    if (lockResult.length === 0) {
-      await sql.query("ROLLBACK");
-      return NextResponse.json(
-        { error: "Applicant not found." },
-        { status: 404, headers: headers },
-      );
-    }
-
-    // Check for multiple matches (only possible with partial UUID)
-    if (lockResult.length && lockResult.length > 1) {
-      await sql.query("ROLLBACK");
-      return NextResponse.json(
-        { error: "Multiple tickets found, please insert the full UUID." },
-        { status: 400, headers: headers },
-      );
-    }
-
-    const attendee = lockResult[0];
-
-    // Check if attendee has paid
-    if (!attendee.paid) {
-      await sql.query("ROLLBACK");
-      return NextResponse.json(
-        { error: "Applicant has not even paid." },
-        { status: 400, headers: headers },
-      );
-    }
-
-    // Check if already admitted
-    if (attendee.admitted_at !== null) {
-      // Grace period: allow same device to re-fetch within 2.5 seconds
-      const admittedTime = new Date(attendee.admitted_at).getTime();
-      if (
-        Date.now() - admittedTime < 2.5 * 1000 &&
-        attendee.admitted_by === deviceUID
-      ) {
-        await sql.query("COMMIT");
-        return NextResponse.json(
-          { success: true, applicant: attendee },
-          { status: 200, headers: headers },
+      // Check for multiple matches (only possible with partial UUID)
+      if (lockResult.length > 1) {
+        throw new AdmitError(
+          400,
+          "Multiple tickets found, please insert the full UUID.",
         );
       }
-      await sql.query("ROLLBACK");
-      return NextResponse.json(
-        { error: "Applicant already admitted." },
-        { status: 400, headers: headers },
-      );
-    }
 
-    // Admit the attendee (use attendee.uuid from locked row for partial UUID support)
-    const result = await sql`
-      UPDATE attendees 
-       SET admitted_at = NOW(), admitted_by = ${deviceUID} 
-       WHERE uuid = ${attendee.uuid} 
-         AND paid = TRUE 
-         AND admitted_at IS NULL
-       RETURNING *`;
+      const attendee = lockResult[0];
 
-    if (result.length === 0) {
-      await sql.query("ROLLBACK");
-      return NextResponse.json(
-        { error: "Applicant is not eligible for admission." },
-        { status: 400, headers: headers },
-      );
-    }
-    // Commit transaction
-    await sql.query("COMMIT");
+      // Check if attendee has paid
+      if (!attendee.paid) {
+        throw new AdmitError(400, "Applicant has not even paid.");
+      }
+
+      // Check if already admitted
+      if (attendee.admitted_at !== null) {
+        // Grace period: allow same device to re-fetch within 2.5 seconds
+        const admittedTime = new Date(attendee.admitted_at).getTime();
+        if (
+          Date.now() - admittedTime < 2.5 * 1000 &&
+          attendee.admitted_by === deviceUID
+        ) {
+          return { applicant: attendee };
+        }
+        throw new AdmitError(400, "Applicant already admitted.");
+      }
+
+      // Admit the attendee (use attendee.uuid from locked row for partial UUID support)
+      const updateResult = await tx`
+        UPDATE attendees 
+         SET admitted_at = NOW(), admitted_by = ${deviceUID} 
+         WHERE uuid = ${attendee.uuid} 
+           AND paid = TRUE 
+           AND admitted_at IS NULL
+         RETURNING *`;
+
+      if (updateResult.length === 0) {
+        throw new AdmitError(400, "Applicant is not eligible for admission.");
+      }
+
+      return { applicant: updateResult[0] };
+    });
 
     return NextResponse.json(
-      { success: true, applicant: result[0] },
+      { success: true, applicant: txResult.applicant },
       { status: 200, headers: headers },
     );
   } catch (error) {
-    await sql.query("ROLLBACK").catch(() => {});
+    if (error instanceof AdmitError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.httpStatus, headers: headers },
+      );
+    }
     console.error("Error:", error);
     return NextResponse.json(
       { error: "An Error Occurred." },
