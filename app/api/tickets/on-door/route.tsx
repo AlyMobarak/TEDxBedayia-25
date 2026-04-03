@@ -126,21 +126,16 @@ export async function POST(request: NextRequest) {
     // Generate a unique UUID before starting the transaction
     const uuid = await safeRandUUID();
 
-    const [attendee] = await sql.transaction(async (tx) => {
-      // Insert new attendee as paid & admitted on-door
-      const result = await tx`
-        INSERT INTO attendees (email, full_name, phone, type, payment_method, paid, uuid, sent, admitted_at, admitted_by)
+    // Use synchronous batch form — both INSERTs are independent and run atomically
+    const [attendeeRows] = await sql.transaction((tx) => [
+      tx`INSERT INTO attendees (email, full_name, phone, type, payment_method, paid, uuid, sent, admitted_at, admitted_by)
          VALUES (${email}, ${name}, ${phone}, 'individual', ${paymentMethod}, TRUE, ${uuid}, TRUE, NOW(), ${device})
-         RETURNING *`;
-
-      await tx`
-        INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) VALUES (${paymentMethod}, ${INDIVIDUAL_TICKET_PRICE}, ${INDIVIDUAL_TICKET_PRICE}, NOW())`;
-
-      return result;
-    });
+         RETURNING *`,
+      tx`INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) VALUES (${paymentMethod}, ${INDIVIDUAL_TICKET_PRICE}, ${INDIVIDUAL_TICKET_PRICE}, NOW())`,
+    ]);
 
     return NextResponse.json(
-      { success: true, applicant: attendee },
+      { success: true, applicant: attendeeRows[0] },
       { status: 200, headers },
     );
   } catch (error) {

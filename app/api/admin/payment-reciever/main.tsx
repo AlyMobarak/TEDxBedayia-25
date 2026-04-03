@@ -1,6 +1,6 @@
 import { Applicant } from "@/app/admin/types/Applicant";
 import { EARLY_BIRD_UNTIL } from "@/app/metadata";
-import { neon } from "@neondatabase/serverless";
+import { Client, neon } from "@neondatabase/serverless";
 import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { TicketType } from "../../../ticket-types";
@@ -8,6 +8,9 @@ import { price } from "../../tickets/prices";
 import { ResponseCode } from "../../utils/response-codes";
 import { scheduleBackgroundEmails } from "./eTicketEmail";
 const sql = neon(`${process.env.DATABASE_URL}`);
+
+// Type for a connected database client used in interactive transactions
+type TxClient = Pick<Client, "query">;
 
 // ============================================================================
 // Constants
@@ -121,16 +124,17 @@ export async function generateBatchUUIDs(count: number): Promise<string[]> {
  * For CASH payments, we additionally filter by email since CASH doesn't have a unique identifier.
  */
 async function fetchUnpaidAttendees(
+  tx: TxClient,
   fullPaymentMethod: string,
   method: string,
   identifier: string | null,
   paymentDate: Date,
 ): Promise<UnpaidAttendee[]> {
-  let query;
+  let result;
 
   if (method === "CASH" && identifier) {
     // CASH payments filter by method AND email
-    query = await sql.query(
+    result = await tx.query(
       `SELECT * FROM attendees 
        WHERE payment_method = $1 AND paid = false AND email = $2
        FOR UPDATE`,
@@ -138,7 +142,7 @@ async function fetchUnpaidAttendees(
     );
   } else {
     // Other payments query by full payment_method (e.g., "TLDA@username")
-    query = await sql.query(
+    result = await tx.query(
       `SELECT * FROM attendees 
        WHERE payment_method = $1 AND paid = false
        FOR UPDATE`,
@@ -146,7 +150,7 @@ async function fetchUnpaidAttendees(
     );
   }
 
-  return query
+  return result.rows
     .filter((row) => row.paid === false && row.type !== TicketType.DISCOUNTED)
     .map((row) => ({
       ...row,
@@ -168,6 +172,7 @@ async function fetchUnpaidAttendees(
  * CASH can't reach this stage.
  */
 async function fetchUnpaidByIds(
+  tx: TxClient,
   ids: number[],
   fullPaymentMethod: string,
   paymentDate: Date,
@@ -177,14 +182,14 @@ async function fetchUnpaidByIds(
     fullPaymentMethod = "CASH";
   }
 
-  const query = await sql.query(
+  const result = await tx.query(
     `SELECT * FROM attendees 
      WHERE id = ANY($1::int[]) AND payment_method = $2 AND paid = false
      FOR UPDATE`,
     [ids, fullPaymentMethod],
   );
 
-  return query
+  return result.rows
     .filter((row) => row.paid === false)
     .map((row) => ({
       id: row.id,
@@ -204,11 +209,12 @@ async function fetchUnpaidByIds(
  * Returns a map of attendee ID -> group info.
  */
 async function fetchGroupsForAttendees(
+  tx: TxClient,
   attendeeIds: number[],
 ): Promise<Map<number, GroupInfo>> {
   if (attendeeIds.length === 0) return new Map();
 
-  const query = await sql.query(
+  const result = await tx.query(
     `SELECT grpid, id1, id2, id3, id4 FROM groups 
      WHERE id1 = ANY($1::int[]) OR id2 = ANY($1::int[]) 
         OR id3 = ANY($1::int[]) OR id4 = ANY($1::int[])`,
@@ -217,7 +223,7 @@ async function fetchGroupsForAttendees(
 
   const groupMap = new Map<number, GroupInfo>();
 
-  for (const row of query) {
+  for (const row of result.rows) {
     const memberIds = [row.id1, row.id2, row.id3, row.id4];
     const groupInfo: GroupInfo = { grpid: row.grpid, memberIds };
 
@@ -233,6 +239,7 @@ async function fetchGroupsForAttendees(
  * Expands attendee list to include all group members for GROUP tickets.
  */
 async function expandGroupMembers(
+  tx: TxClient,
   attendees: UnpaidAttendee[],
   fullPaymentMethod: string,
   paymentDate: Date,
@@ -243,7 +250,7 @@ async function expandGroupMembers(
 
   if (groupAttendeeIds.length === 0) return attendees;
 
-  const groupMap = await fetchGroupsForAttendees(groupAttendeeIds);
+  const groupMap = await fetchGroupsForAttendees(tx, groupAttendeeIds);
 
   // Collect all member IDs we need to fetch
   const allMemberIds = new Set<number>();
@@ -262,6 +269,7 @@ async function expandGroupMembers(
   if (missingIds.length === 0) return attendees;
 
   const additionalMembers = await fetchUnpaidByIds(
+    tx,
     missingIds,
     fullPaymentMethod,
     paymentDate,
@@ -311,6 +319,7 @@ function analyzeUnpaidAttendees(attendees: UnpaidAttendee[]): {
  * Returns ambiguity data for 431 response if needed.
  */
 async function checkForAmbiguity(
+  tx: TxClient,
   unpaid: UnpaidAttendee[],
   amount: number,
   total: number,
@@ -336,7 +345,7 @@ async function checkForAmbiguity(
       .filter((a) => a.type === TicketType.GROUP)
       .map((a) => a.id);
 
-    const groupMap = await fetchGroupsForAttendees(groupAttendeeIds);
+    const groupMap = await fetchGroupsForAttendees(tx, groupAttendeeIds);
 
     for (const attendee of unpaid) {
       if (
@@ -361,6 +370,7 @@ async function checkForAmbiguity(
 
         // Fetch other group members for the groupMembers map
         const otherMembers = await fetchUnpaidByIds(
+          tx,
           otherMemberIds,
           fullPaymentMethod,
           paymentDate,
@@ -381,12 +391,13 @@ async function checkForAmbiguity(
  * Collects unique groups from attendees and returns grouped data.
  */
 async function collectUniqueGroups(
+  tx: TxClient,
   groupAttendees: UnpaidAttendee[],
 ): Promise<Map<number, number[]>> {
   if (groupAttendees.length === 0) return new Map();
 
   const attendeeIds = groupAttendees.map((a) => a.id);
-  const groupMap = await fetchGroupsForAttendees(attendeeIds);
+  const groupMap = await fetchGroupsForAttendees(tx, attendeeIds);
 
   // Deduplicate by grpid
   const uniqueGroups = new Map<number, number[]>();
@@ -404,6 +415,7 @@ async function collectUniqueGroups(
  * Uses bulk operations for efficiency.
  */
 async function processPayments(
+  tx: TxClient,
   unpaid: UnpaidAttendee[],
   amount: number,
   paymentDate: Date,
@@ -431,7 +443,7 @@ async function processPayments(
   }
 
   // Process groups
-  const uniqueGroups = await collectUniqueGroups(groupAttendees);
+  const uniqueGroups = await collectUniqueGroups(tx, groupAttendees);
 
   for (const [, memberIds] of uniqueGroups) {
     if (paidAmount + groupPrice <= amount) {
@@ -453,7 +465,7 @@ async function processPayments(
     return { paidAmount: 0, paidAttendees: [] };
   }
 
-  // Generate UUIDs in batch
+  // Generate UUIDs in batch (read-only check, does not need tx)
   const uuids = await generateBatchUUIDs(attendeesToUpdate.length);
   for (let i = 0; i < attendeesToUpdate.length; i++) {
     attendeesToUpdate[i].uuid = uuids[i];
@@ -464,7 +476,7 @@ async function processPayments(
   const uuidList = attendeesToUpdate.map((a) => a.uuid);
   const types = attendeesToUpdate.map((a) => a.type);
 
-  await sql.query(
+  await tx.query(
     `UPDATE attendees
      SET paid = true, 
          uuid = data.uuid::uuid,
@@ -538,9 +550,20 @@ export async function pay(
     );
   }
 
-  try {
-    // Handle refunds (negative amounts)
-    if (amountNum < 0) {
+  // Custom error to carry HTTP status and response data out of the transaction
+  class PayError extends Error {
+    constructor(
+      public readonly httpStatus: number,
+      message: string,
+      public readonly data: Record<string, unknown> = {},
+    ) {
+      super(message);
+    }
+  }
+
+  // Handle refunds (negative amounts) — no transaction needed
+  if (amountNum < 0) {
+    try {
       const streamName = formatPaymentSourceForStorage(paymentSource);
       await sql`
         INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) 
@@ -550,27 +573,34 @@ export async function pay(
         { refund: true, message: "Refund Inserted." },
         { status: 200 },
       );
+    } catch (e) {
+      console.error("Refund insert error:", e);
+      return NextResponse.json(
+        { message: "An error occurred processing the refund. Please try again." },
+        { status: 500 },
+      );
     }
+  }
 
-    // Start transaction for payment processing
-    await sql.query("BEGIN");
+  const client = new Client(process.env.DATABASE_URL!);
+  await client.connect();
 
-    // Fetch unpaid attendees
+  try {
+    await client.query("BEGIN");
+
+    // Fetch unpaid attendees (acquires FOR UPDATE row locks on the connection)
     let unpaid = await fetchUnpaidAttendees(
-      from, // Full payment method string (e.g., "TLDA@username")
+      client,
+      from,
       paymentSource.method,
       paymentSource.identifier,
       paymentDate,
     );
 
     if (unpaid.length === 0) {
-      await sql.query("ROLLBACK");
-      return NextResponse.json(
-        {
-          message:
-            "Not found. Try Again or Refund (Ticket isn't marked as paid yet).",
-        },
-        { status: 400 },
+      throw new PayError(
+        400,
+        "Not found. Try Again or Refund (Ticket isn't marked as paid yet).",
       );
     }
 
@@ -582,20 +612,16 @@ export async function pay(
       let filtered = unpaid.filter((a) => requestedIds.includes(a.id));
 
       // Expand groups for requested IDs
-      filtered = await expandGroupMembers(filtered, from, paymentDate);
+      filtered = await expandGroupMembers(client, filtered, from, paymentDate);
 
       unpaid = filtered;
 
       if (unpaid.length === 0) {
-        await sql.query("ROLLBACK");
-        return NextResponse.json(
-          { message: "Nobody to pay for." },
-          { status: 400 },
-        );
+        throw new PayError(400, "Nobody to pay for.");
       }
     } else {
       // Expand to include all group members if dealing with groups
-      unpaid = await expandGroupMembers(unpaid, from, paymentDate);
+      unpaid = await expandGroupMembers(client, unpaid, from, paymentDate);
     }
 
     // Analyze what we have
@@ -604,6 +630,7 @@ export async function pay(
     // Check for ambiguity (partial payment that could apply to multiple tickets)
     if (id_if_needed === "") {
       const ambiguity = await checkForAmbiguity(
+        client,
         unpaid,
         amountNum,
         analysis.total,
@@ -614,22 +641,20 @@ export async function pay(
       );
 
       if (ambiguity) {
-        await sql.query("ROLLBACK");
-        return NextResponse.json(
-          {
-            message:
-              "Not enough money to pay for all tickets. Identify using IDs.",
-            found: ambiguity.found,
-            groupMembers: ambiguity.groupMembers,
-          },
-          { status: ResponseCode.TICKET_AMBIGUITY },
+        throw new PayError(
+          ResponseCode.TICKET_AMBIGUITY,
+          "Not enough money to pay for all tickets. Identify using IDs.",
+          { found: ambiguity.found, groupMembers: ambiguity.groupMembers },
         );
       }
     }
 
     // Check for group-only ambiguity (multiple groups, can't pay for all)
     if (analysis.containsGroup && !analysis.containsIndividual) {
-      const uniqueGroups = await collectUniqueGroups(analysis.groupAttendees);
+      const uniqueGroups = await collectUniqueGroups(
+        client,
+        analysis.groupAttendees,
+      );
       const groupPrice =
         price.getPrice(TicketType.GROUP, paymentDate) * GROUP_SIZE;
 
@@ -652,49 +677,42 @@ export async function pay(
           }
         }
 
-        await sql.query("ROLLBACK");
-        return NextResponse.json(
-          {
-            message:
-              "Not enough money to pay for all tickets. Identify using IDs.",
-            found,
-            groupMembers,
-          },
-          { status: ResponseCode.TICKET_AMBIGUITY },
+        throw new PayError(
+          ResponseCode.TICKET_AMBIGUITY,
+          "Not enough money to pay for all tickets. Identify using IDs.",
+          { found, groupMembers },
         );
       }
     }
 
     // Process payments
     const { paidAmount, paidAttendees } = await processPayments(
+      client,
       unpaid,
       amountNum,
       paymentDate,
     );
 
     if (paidAmount === 0) {
-      await sql.query("ROLLBACK");
-      return NextResponse.json(
-        {
-          message: `Nothing was paid. To pay for all tickets: ${analysis.total} EGP. Paying for only one ticket (or an entire group ticket) is accepted as well.`,
-        },
-        { status: 400 },
+      throw new PayError(
+        400,
+        `Nothing was paid. To pay for all tickets: ${analysis.total} EGP. Paying for only one ticket (or an entire group ticket) is accepted as well.`,
       );
     }
 
-    // Log to pay_backup BEFORE sending emails (ensures payment is recorded)
+    // Log to pay_backup inside the transaction (ensures atomicity with payment update)
     const streamName = formatPaymentSourceForStorage(paymentSource);
     if (amountNum !== 0) {
-      await sql`
-        INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) 
-        VALUES (${streamName}, ${paidAmount}, ${amount}, ${date})
-      `;
+      await client.query(
+        `INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) 
+         VALUES ($1, $2, $3, $4)`,
+        [streamName, paidAmount, amount, date],
+      );
     }
 
-    // Commit transaction - payment is now final
-    await sql.query("COMMIT");
+    await client.query("COMMIT");
 
-    // Send emails (after commit, so payment is safe even if emails fail)
+    // Send emails after the transaction is committed (payment is safe even if emails fail)
     sendEmails(paidAttendees);
 
     return NextResponse.json(
@@ -706,7 +724,13 @@ export async function pay(
       { status: 200 },
     );
   } catch (e) {
-    await sql.query("ROLLBACK").catch(() => {});
+    await client.query("ROLLBACK").catch(() => {});
+    if (e instanceof PayError) {
+      return NextResponse.json(
+        { message: e.message, ...e.data },
+        { status: e.httpStatus },
+      );
+    }
     console.error("Payment processing error:", e);
     return NextResponse.json(
       {
@@ -714,6 +738,8 @@ export async function pay(
       },
       { status: 500 },
     );
+  } finally {
+    await client.end();
   }
 }
 
