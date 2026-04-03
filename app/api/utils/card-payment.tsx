@@ -71,17 +71,20 @@ export async function initiateCardPayment(
       .toString()
       .split(",")
       .map((id) => parseInt(id, 10));
-    const arrayLiteral = `{${ids.join(",")}}`;
 
     const newMethod = "CARD@" + result.intention_order_id;
     const updated =
       (
-        await sql`
+        await sql.query(
+          `
           UPDATE attendees
-          SET payment_method = ${newMethod}
-          WHERE id = ANY(${arrayLiteral}::int[])
+          SET payment_method = $1
+          WHERE id = ANY($2::int[])
           AND paid = FALSE
-        `
+          RETURNING id
+        `,
+          [newMethod, ids],
+        )
       ).length === ids.length;
 
     if (!updated) {

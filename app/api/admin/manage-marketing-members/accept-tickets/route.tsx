@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
 
     let stream = "Marketing@" + memberId;
 
-    client`INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) VALUES (${stream}, ${paid}, ${paid}, NOW())`;
+    await client`INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) VALUES (${stream}, ${paid}, ${paid}, NOW())`;
 
     const results = await Promise.all(
       result.map(async (row) => {

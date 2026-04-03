@@ -5,6 +5,8 @@ import { EVENT_DATE } from "@/app/metadata";
 import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 
+const sql = neon(`${process.env.DATABASE_URL}`);
+
 export async function GET(req: NextRequest) {
   const csrfError = validateCsrf(req);
   if (csrfError) return csrfError;
@@ -33,11 +35,9 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const sql = neon(`${process.env.DATABASE_URL}`);
-
     await sql.transaction([
       // Instantly wipe these tables and reset their sequences to 1
-      sql`TRUNCATE TABLE groups, rush_hour, marketing_members, pay_backup RESTART IDENTITY CASCADE`,
+      sql`TRUNCATE TABLE groups, rush_hour, marketing_members, pay_backup, account_holders RESTART IDENTITY CASCADE`,
 
       // Wipe attendees, but manually set its sequence to 140
       sql`TRUNCATE TABLE attendees CASCADE`,
@@ -46,6 +46,7 @@ export async function GET(req: NextRequest) {
       // Clear the rush hour setting
       sql`UPDATE settings SET value = NULL WHERE key = ${SQLSettings.RUSH_HOUR_DATE}`,
     ]);
+
     return NextResponse.json({ message: "Data deleted." }, { status: 200 });
   } catch (error) {
     console.error("Error deleting data:", error);

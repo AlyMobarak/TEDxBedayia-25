@@ -23,15 +23,13 @@ export async function GET(request: NextRequest) {
       createdAt: row.created_at,
     }));
 
-    let idsOrNull = rows
-      .map((row) => row.attendeeId)
-      .filter((x) => x != null)
-      .join(",");
+    let idsOrNull = rows.map((row) => row.attendeeId).filter((x) => x != null);
 
     let attendees: any[] = [];
-    if (idsOrNull !== "") {
+    if (idsOrNull.length > 0) {
       attendees = await sql.query(
-        `SELECT id, type FROM attendees WHERE id IN (${idsOrNull})`,
+        `SELECT id, type FROM attendees WHERE id = ANY($1::int[])`,
+        [idsOrNull],
       );
     }
 
