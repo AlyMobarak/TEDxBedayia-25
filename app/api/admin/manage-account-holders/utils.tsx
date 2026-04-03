@@ -2,14 +2,14 @@ import { neon } from "@neondatabase/serverless";
 import argon2 from "argon2";
 import { ProtectedResource } from "../../utils/auth";
 
+const sql = neon(`${process.env.DATABASE_URL}`);
+
 // To be called after verification of permissions
 export async function createAccountHolder(
   username: string,
   password: string,
 ): Promise<{ id?: number }> {
   try {
-    const sql = neon(`${process.env.DATABASE_URL}`);
-
     // Hash the password
     const hashedPassword = await argon2.hash(password, {
       type: argon2.argon2id,
@@ -35,8 +35,6 @@ export async function setPaymentMethodsToAccountHolder(
   paymentMethods: string[],
 ): Promise<boolean> {
   try {
-    const sql = neon(`${process.env.DATABASE_URL}`);
-
     const query = `
       UPDATE account_holders
       SET allowed_methods = $1
@@ -57,7 +55,6 @@ export async function setAdditionalScopesToAccountHolder(
   additionalScopes: ProtectedResource[],
 ): Promise<boolean> {
   try {
-    const sql = neon(`${process.env.DATABASE_URL}`);
     const query = `
       UPDATE account_holders
       SET additional_scopes = $1
@@ -85,7 +82,6 @@ export async function getAccountHolderInfo(
     }
   | undefined
 > {
-  const sql = neon(`${process.env.DATABASE_URL}`);
   const result =
     await sql`SELECT * FROM account_holders WHERE username = ${username}`;
   const hashedPassword = result[0]?.hashed_password;
@@ -113,7 +109,6 @@ export async function getAllAccountHolders(): Promise<
     additional_scopes?: ProtectedResource[];
   }[]
 > {
-  const sql = neon(`${process.env.DATABASE_URL}`);
   const result =
     await sql`SELECT id, username, allowed_methods, additional_scopes FROM account_holders`;
   try {

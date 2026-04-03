@@ -10,6 +10,8 @@ import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { scheduleBackgroundEmails } from "../../payment-reciever/eTicketEmail";
 
+const client = neon(`${process.env.DATABASE_URL}`);
+
 export async function POST(request: NextRequest) {
   if (!canUserAccess(request, ProtectedResource.MARKETING_DASHBOARD)) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
@@ -30,7 +32,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const client = neon(process.env.DATABASE_URL!);
     // If paid amount is less than total due, return error
     // 1. Calculate the Total Due dynamically
     const totalDueResult = await client.query(

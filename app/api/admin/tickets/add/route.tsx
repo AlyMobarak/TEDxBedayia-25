@@ -1,6 +1,5 @@
-import { neon, Pool } from "@neondatabase/serverless";
+import { Pool } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
-import { PaymentMethodKey } from "../../../../payment-methods";
 import { TicketType } from "../../../../ticket-types";
 import { price } from "../../../tickets/prices";
 import { canUserAccess, ProtectedResource } from "../../../utils/auth";
@@ -10,12 +9,10 @@ import {
   verifyEmail,
 } from "../../../utils/input-sanitization";
 import { scheduleBackgroundEmails } from "../../payment-reciever/eTicketEmail";
-import { generateBatchUUIDs, safeRandUUID } from "../../payment-reciever/main";
+import { generateBatchUUIDs } from "../../payment-reciever/main";
 
 // Constants
 const GROUP_SIZE = 4;
-
-const sql = neon(`${process.env.DATABASE_URL}`);
 
 export async function POST(req: NextRequest) {
   // 1. Auth Check

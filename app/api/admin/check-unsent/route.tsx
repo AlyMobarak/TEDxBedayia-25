@@ -3,6 +3,8 @@ import { type NextRequest } from "next/server";
 import { canUserAccess, ProtectedResource } from "../../utils/auth";
 import { validateCsrf } from "../../utils/csrf";
 
+const sql = neon(`${process.env.DATABASE_URL}`);
+
 export async function GET(request: NextRequest) {
   const csrfError = validateCsrf(request);
   if (csrfError) return csrfError;
@@ -12,8 +14,6 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const sql = neon(`${process.env.DATABASE_URL}`);
-
     // Check if there are any paid tickets that haven't been sent
     const result = await sql`
       SELECT COUNT(*) as count

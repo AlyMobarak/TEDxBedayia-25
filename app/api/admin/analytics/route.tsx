@@ -10,6 +10,8 @@ import {
 import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 
+const sql = neon(`${process.env.DATABASE_URL}`);
+
 // Price mapping for revenue calculation
 const TICKET_PRICES: Record<string, number> = {
   individual: INDIVIDUAL_TICKET_PRICE,
@@ -28,8 +30,6 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const sql = neon(`${process.env.DATABASE_URL}`);
-
     // 1. Sales over time (daily counts for last 30 days)
     const salesOverTime = await sql`
       SELECT 
