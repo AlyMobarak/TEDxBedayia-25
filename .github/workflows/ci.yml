@@ -12,14 +12,7 @@ jobs:
   verify-build:
     runs-on: ubuntu-latest
     env:
-      POSTGRES_URL: "postgresql://user:password@localhost:5432/dbname"
-      POSTGRES_PRISMA_URL: "postgresql://user:password@localhost:5432/dbname"
-      POSTGRES_URL_NO_SSL: "postgresql://user:password@localhost:5432/dbname"
-      POSTGRES_URL_NON_POOLING: "postgresql://user:password@localhost:5432/dbname"
-      POSTGRES_USER: "user"
-      POSTGRES_HOST: "localhost"
-      POSTGRES_PASSWORD: "password"
-      POSTGRES_DATABASE: "dbname"
+      DATABASE_URL: "postgresql://user:password@localhost:5432/dbname"
       EMAIL: "test@example.com"
       CLIENT_ID: "dummy_client_id"
       CLIENT_SECRET: "dummy_client_secret"
