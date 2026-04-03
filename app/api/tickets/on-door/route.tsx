@@ -123,28 +123,27 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    await sql.query("BEGIN");
-
-    // Generate a unique UUID
+    // Generate a unique UUID before starting the transaction
     const uuid = await safeRandUUID();
 
-    // Insert new attendee as paid & admitted on-door
-    const result = await sql`
-      INSERT INTO attendees (email, full_name, phone, type, payment_method, paid, uuid, sent, admitted_at, admitted_by)
-       VALUES (${email}, ${name}, ${phone}, 'individual', ${paymentMethod}, TRUE, ${uuid}, TRUE, NOW(), ${device})
-       RETURNING *`;
+    const [attendee] = await sql.transaction(async (tx) => {
+      // Insert new attendee as paid & admitted on-door
+      const result = await tx`
+        INSERT INTO attendees (email, full_name, phone, type, payment_method, paid, uuid, sent, admitted_at, admitted_by)
+         VALUES (${email}, ${name}, ${phone}, 'individual', ${paymentMethod}, TRUE, ${uuid}, TRUE, NOW(), ${device})
+         RETURNING *`;
 
-    await sql`
-      INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) VALUES (${paymentMethod}, ${INDIVIDUAL_TICKET_PRICE}, ${INDIVIDUAL_TICKET_PRICE}, NOW())`;
+      await tx`
+        INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) VALUES (${paymentMethod}, ${INDIVIDUAL_TICKET_PRICE}, ${INDIVIDUAL_TICKET_PRICE}, NOW())`;
 
-    await sql.query("COMMIT");
+      return result;
+    });
 
     return NextResponse.json(
-      { success: true, applicant: result[0] },
+      { success: true, applicant: attendee },
       { status: 200, headers },
     );
   } catch (error) {
-    await sql.query("ROLLBACK").catch(() => {});
     console.error("On-door ticket error:", error);
     return NextResponse.json(
       { error: "An Error Occurred." },
