@@ -16,7 +16,7 @@ export const GROUP_EARLY_PRICE = 375; // Change to early bird group ticket price
 
 export const TICKET_WINDOW = [
   new Date("2026-01-03T22:00:00Z"), // 2026-01-04 00:00 GMT+2
-  new Date("2026-02-13T6:00:00Z"), // 2026-02-13 08:00 GMT+2
+  new Date("2026-02-13T06:00:00Z"), // 2026-02-13 08:00 GMT+2
 ]; // Change to actual ticket window
 export const EARLY_BIRD_UNTIL: Date | null = new Date("2026-01-12T22:00:00Z"); // Change to actual early bird deadline or null if not applicable
 
