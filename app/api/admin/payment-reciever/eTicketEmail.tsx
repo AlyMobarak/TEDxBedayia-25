@@ -1,5 +1,5 @@
 import { EVENT_DESC, HOST, PHONE, YEAR } from "@/app/metadata";
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { promises } from "fs";
 import { after } from "next/server";
 import nodemailer from "nodemailer";
@@ -8,10 +8,12 @@ import QRCode from "qrcode";
 import { Resend } from "resend";
 import { TicketEmail } from "../../../components/TicketEmail";
 import { EmailRecipient } from "../../utils/email-helper";
-const resend = new Resend(process.env.RESEND_API_KEY!);
 
-// Rate limit delay in ms (600ms = ~1.67 req/s, safely under 2 req/s limit)
-const RATE_LIMIT_DELAY_MS = 600;
+const resend = new Resend(process.env.RESEND_API_KEY!);
+const sql = neon(`${process.env.DATABASE_URL}`);
+
+// Rate limit delay in ms (800ms = ~1.25 req/s, safely under 2 req/s limit)
+const RATE_LIMIT_DELAY_MS = 800;
 
 // Helper function to delay execution
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -24,7 +26,7 @@ async function setSentStatus(id?: string) {
   const query =
     await sql`UPDATE attendees SET sent = true WHERE id = ${id} RETURNING *`;
 
-  if (query.rowCount === 0) {
+  if (query.length === 0) {
     console.error("SQL ERROR; sent = false but it's sent.");
     return false;
   }

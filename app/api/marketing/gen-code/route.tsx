@@ -1,9 +1,11 @@
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { NextRequest } from "next/server";
 import { TicketType } from "../../../ticket-types";
 import { price } from "../../tickets/prices";
 import { getMarketingMemberPass } from "../../utils/auth";
 import { SQLSettings } from "../../utils/sql-settings";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 // Returns a random code in the format "XXXX-XXXX" alphanumeric
 async function randCode() {
@@ -21,7 +23,7 @@ async function safeRandCode() {
   do {
     code = await randCode();
     // Check if the code already exists in the database
-    const { rows } = await sql`SELECT id FROM rush_hour WHERE code = ${code};`;
+    const rows = await sql`SELECT id FROM rush_hour WHERE code = ${code};`;
     if (rows.length === 0) {
       return code; // Return the code if it is unique
     }
@@ -35,7 +37,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return Response.json(
       { message: "Please provide a valid JSON body." },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -46,7 +48,7 @@ export async function POST(request: NextRequest) {
   ) {
     return Response.json(
       { message: "Invalid marketing member credentials." },
-      { status: 401 }
+      { status: 401 },
     );
   }
 
@@ -55,7 +57,7 @@ export async function POST(request: NextRequest) {
   if (!name || !grade || !type || !ticketCount || !paid) {
     return Response.json(
       { message: "Please fill out all required fields." },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -73,36 +75,32 @@ export async function POST(request: NextRequest) {
           ticketCount * price.getPrice(type, new Date(), "CASH") +
           " EGP.",
       },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
   let codes: string[] = [];
 
   try {
-    const client = await sql.connect();
-
-    let { rows } =
-      await client.sql`SELECT id FROM marketing_members WHERE username = ${request.headers.get(
-        "username"
+    let rows =
+      await sql`SELECT id FROM marketing_members WHERE username = ${request.headers.get(
+        "username",
       )};`;
     const memberID = rows[0]?.id;
     if (!memberID) {
-      client.release();
       return Response.json(
         { message: "Invalid marketing member credentials." },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
-    let { rows: settingsRows } =
-      await client.sql`SELECT value FROM settings WHERE key = ${SQLSettings.RUSH_HOUR_DATE};`;
+    let settingsRows =
+      await sql`SELECT value FROM settings WHERE key = ${SQLSettings.RUSH_HOUR_DATE};`;
     const rushHourDate = settingsRows[0]?.value;
     if (!rushHourDate) {
-      client.release();
       return Response.json(
         { message: "Rush hour date is not set." },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
@@ -113,22 +111,19 @@ export async function POST(request: NextRequest) {
       new Date(rushHourDate).setHours(0, 0, 0, 0) !==
         currentDate.setHours(0, 0, 0, 0)
     ) {
-      client.release();
       return Response.json(
         { message: "Rush hour is not today." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     for (let i = 0; i < ticketCount; i++) {
       const code = await safeRandCode();
-      await client.sql`INSERT INTO rush_hour (marketing_member_id, code, note)
+      await sql`INSERT INTO rush_hour (marketing_member_id, code, note)
       VALUES (${memberID}, ${code}, ${note})
       RETURNING id;`;
       codes.push(code);
     }
-
-    client.release();
   } catch (error) {
     console.error("Error processing marketing ticket submission:", error);
     return Response.json({ message: "Error occurred." }, { status: 400 });
@@ -138,6 +133,6 @@ export async function POST(request: NextRequest) {
       message: "Ticket submission successful.",
       codes,
     },
-    { status: 200 }
+    { status: 200 },
   );
 }

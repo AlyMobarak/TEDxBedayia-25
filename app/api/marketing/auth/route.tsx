@@ -1,6 +1,8 @@
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { NextRequest } from "next/server";
 import { getMarketingMemberPass } from "../../utils/auth";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 export async function POST(request: NextRequest) {
   const { username, password } = await request.json();
@@ -11,7 +13,7 @@ export async function POST(request: NextRequest) {
         valid: false,
         message: "Username and password are required.",
       },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -22,18 +24,15 @@ export async function POST(request: NextRequest) {
         message:
           "Marketing member credentials are not set. Please contact support.",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 
   let user =
     await sql`SELECT * FROM marketing_members WHERE username = ${username.toLowerCase()}`;
 
-  if (user.rows.length != 0 && password === getMarketingMemberPass(username)) {
-    return Response.json(
-      { valid: true, name: user.rows[0].name },
-      { status: 200 }
-    );
+  if (user.length != 0 && password === getMarketingMemberPass(username)) {
+    return Response.json({ valid: true, name: user[0].name }, { status: 200 });
   } else {
     return Response.json({ valid: false }, { status: 401 });
   }

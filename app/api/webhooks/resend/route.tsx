@@ -1,7 +1,9 @@
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { Webhook } from "svix";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 const webhookSecret = process.env.RESEND_WEBHOOK_SECRET;
 

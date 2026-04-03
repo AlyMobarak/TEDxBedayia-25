@@ -1,4 +1,6 @@
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 export async function POST(request: Request) {
   try {
@@ -8,21 +10,21 @@ export async function POST(request: Request) {
     }
     const result =
       await sql`SELECT id FROM rush_hour WHERE code = ${code} LIMIT 1;`;
-    if (result.rowCount === 0) {
+    if (result.length === 0) {
       await new Promise((resolve) => setTimeout(resolve, 4000));
       return Response.json(
         { message: "Invalid or expired code." },
-        { status: 400 }
+        { status: 400 },
       );
     }
     return Response.json(
       { message: "Rush Hour Code exists." },
-      { status: 200 }
+      { status: 200 },
     );
   } catch (error) {
     return Response.json(
       { message: "Error checking Rush Hour code." },
-      { status: 400 }
+      { status: 400 },
     );
   }
 }

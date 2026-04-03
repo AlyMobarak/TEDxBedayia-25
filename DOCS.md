@@ -44,11 +44,11 @@
 | -------------- | ------------------------------------------------- |
 | Framework      | **Next.js 16** (App Router)                       |
 | Language       | **TypeScript**                                    |
-| Database       | **Vercel Postgres** (`@vercel/postgres`)          |
+| Database       | **Neon Postgres** (`@neondatabase/serverless`)    |
 | Primary Email  | **Resend** (React Email components, rate-limited) |
 | Fallback Email | **Nodemailer** (Gmail OAuth2)                     |
-| Payments       | **Paymob** (card payments via unified checkout)   |
-| Auth           | **JWT** (jsonwebtoken, 7-day expiry)              |
+| Payments       | **Manual** (card payments via school website)     |
+| Auth           | **JWT** (jsonwebtoken)                            |
 | Charts         | **Recharts**                                      |
 | Styling        | **Tailwind CSS** + CSS Modules                    |
 | Hosting        | **Vercel**                                        |
@@ -114,6 +114,8 @@ The `getPrice(type, receivedAt, method)` function calculates the correct price c
 | `groups`     | Links 4 attendees (id1–id4) for group tickets                                                                          |
 | `pay_backup` | Payment audit log (stream, incurred, received, received_at)                                                            |
 | `rush_hour`  | Marketing rush hour codes (code, attendee_id, processed)                                                               |
+
+P.S. If you ever need to edit the database schema, mention me (@AlyMobarak) on the pull request that uses it or contact me on WhatsApp if you have my number.
 
 ---
 
@@ -421,7 +423,7 @@ The system uses a **dual-provider email architecture**:
 
 - Automatically used if any Resend emails fail
 - Uses HTML templates from `public/` directory
-- Uses Gmail OAuth2 authentication (no "less secure apps" needed)
+- Uses Gmail OAuth2 authentication
 
 ### Booking Confirmations
 
@@ -464,7 +466,7 @@ The system uses a **dual-provider email architecture**:
 ### Database Security
 
 - Row-level locking (`SELECT ... FOR UPDATE`) on admission and payment processing to prevent race conditions
-- Database transactions (`BEGIN`/`COMMIT`/`ROLLBACK`) for atomicity
+- Database transactions (`sql.transaction()`) for atomicity
 - Parameterized SQL queries throughout
 
 ### Payment Security
@@ -478,11 +480,10 @@ The system uses a **dual-provider email architecture**:
 # 9. Things to Maintain
 
 - **Domain Name**: [tedxbedayia.com](https://tedxbedayia.com) — renew around 31st of December.
-- **Vercel Hosting**: Ensure everything is linked to the GitHub repository and domain.
-- **Database**: Clear after last year's event and after testing.
+- **Database**: Clear after last year's event from admin dashboard.
 - **Resend Account**: Ensure the API key and webhook secret are configured.
 - **Gmail Account**: OAuth2 credentials must be valid (used as email fallback + booking confirmations + speaker invitations).
-- **Paymob Account**: Keep API keys, HMAC secret, and integration IDs updated for card payments.
+- **Paymob Account**: Keep API keys, HMAC secret, and integration IDs updated for card payments (if used).
 
 ### Environment Variables
 
@@ -490,7 +491,7 @@ The following are required in `.env` (or Vercel environment configuration, which
 
 | Variable                                                       | Purpose                                           |
 | -------------------------------------------------------------- | ------------------------------------------------- |
-| `POSTGRES_*`                                                   | Database connection (managed by Vercel Postgres)  |
+| `DATABASE_URL`                                                 | Database connection (managed by Neon)             |
 | `JWT_SECRET`                                                   | JWT token signing                                 |
 | `APP_KEY`                                                      | Usher app authentication                          |
 | `RESEND_API_KEY`                                               | Resend email service                              |
@@ -504,20 +505,20 @@ The following are required in `.env` (or Vercel environment configuration, which
 | `MARKETING_MEMBER_PASSWORD_GEN`                                | Secret for generating marketing member passwords  |
 | `ALLOWED_ORIGINS`                                              | Additional CSRF-allowed origins (comma-separated) |
 
-P.S. If you ever need to add another environment variable, mention me (@AlyMobarak) on the pull request that uses it or contact me on WhatsApp if you have my number.
+P.S. If you ever need to add another environment variable or edit the database schema, mention me (@AlyMobarak) on the pull request that uses it or contact me on WhatsApp if you have my number.
 
 ---
 
 # 10. For the Future
 
 - [x] ~~Classify Portal into different roles~~ (Implemented: Admin, Marketing Head, Payment Handler, School Office)
-- [x] ~~Always use `sql.connect()` for multiple SQL queries~~ (Implemented on critical paths with row-level locking)
+- [x] ~~Always use `sql.transaction()` for multiple SQL queries~~ (Implemented on critical paths with row-level locking)
 - [ ] Upgrade Account Holders Portal to include Marketing Heads and School Office for easy password regeneration.
 - [ ] Add a settings tab to set ticket window, event date, and other important things for the head.
 - [ ] Add a way to refresh the Usher App Key each year.
-- [ ] Implement Refresh Tokens for All Accounts for better security.
+- [ ] Implement JWT Refresh Tokens for All Accounts for better security.
 - [ ] Fix spelling error in `payment-reciever` (should be `payment-receiver`).
-- [ ] Add audit logging for admin actions (table exists in design but not yet implemented).
+- [ ] Add audit logging for admin actions.
 
 ---
 
@@ -561,7 +562,7 @@ P.S. If you ever need to add another environment variable, mention me (@AlyMobar
 
 # Appendix: Ushers App
 
-The Ushers App is a separate **PWA** project at `AlyMobarak/PWA` — request access from the author if needed. It communicates with:
+The Ushers App is a separate **EXPO** project at `TEDx-Bedayia/usher-app`. It communicates with:
 
 - `GET /api/tickets/admit/{uuid}/` — scan and admit attendees
 - `GET /api/tickets/on-door/` — fetch pricing and payment methods

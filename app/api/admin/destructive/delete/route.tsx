@@ -2,8 +2,10 @@ import { canUserAccess, ProtectedResource } from "@/app/api/utils/auth";
 import { validateCsrf } from "@/app/api/utils/csrf";
 import { SQLSettings } from "@/app/api/utils/sql-settings";
 import { EVENT_DATE } from "@/app/metadata";
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 export async function GET(req: NextRequest) {
   const csrfError = validateCsrf(req);
@@ -21,33 +23,30 @@ export async function GET(req: NextRequest) {
       {
         message: "Unauthorized",
       },
-      { status: 401 }
+      { status: 401 },
     );
   }
 
-  if (new Date() <= EVENT_DATE && process.env.MAINTAINER !== "dev") {
+  if (new Date() <= EVENT_DATE && process.env.NODE_ENV !== "development") {
     return NextResponse.json(
       { message: "Event has not concluded yet." },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
   try {
-    const client = await sql.connect();
-    await client.sql`DELETE FROM groups`;
-    await client.sql`DELETE FROM rush_hour`;
-    await client.sql`DELETE FROM marketing_members`;
-    await client.sql`DELETE FROM attendees`;
-    await client.sql`DELETE FROM pay_backup`;
-    await client.sql`DELETE FROM account_holders`;
-    await client.sql`ALTER SEQUENCE attendees_id_seq RESTART WITH 140`;
-    await client.sql`ALTER SEQUENCE groups_grpid_seq RESTART WITH 1`;
-    await client.sql`ALTER SEQUENCE marketing_members_id_seq RESTART WITH 1`;
-    await client.sql`ALTER SEQUENCE rush_hour_id_seq RESTART WITH 1`;
-    await client.sql`ALTER SEQUENCE account_holders_id_seq RESTART WITH 1`;
+    await sql.transaction([
+      // Instantly wipe these tables and reset their sequences to 1
+      sql`TRUNCATE TABLE groups, rush_hour, marketing_members, pay_backup, account_holders RESTART IDENTITY CASCADE`,
 
-    await client.sql`UPDATE settings SET value = NULL WHERE key = ${SQLSettings.RUSH_HOUR_DATE}`;
-    client.release();
+      // Wipe attendees, but manually set its sequence to 140
+      sql`TRUNCATE TABLE attendees CASCADE`,
+      sql`ALTER SEQUENCE attendees_id_seq RESTART WITH 140`,
+
+      // Clear the rush hour setting
+      sql`UPDATE settings SET value = NULL WHERE key = ${SQLSettings.RUSH_HOUR_DATE}`,
+    ]);
+
     return NextResponse.json({ message: "Data deleted." }, { status: 200 });
   } catch (error) {
     console.error("Error deleting data:", error);

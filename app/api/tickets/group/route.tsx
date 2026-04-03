@@ -1,5 +1,5 @@
 import { TICKET_WINDOW } from "@/app/metadata";
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { type NextRequest } from "next/server";
 import { TicketType } from "../../../ticket-types";
 import { initiateCardPayment } from "../../utils/card-payment";
@@ -12,6 +12,8 @@ import {
   verifyPaymentMethod,
 } from "../../utils/input-sanitization";
 import { price } from "../prices";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 // email1, name1, email2, name2, email3, name3, email4, name4,
 // phone, paymentMethod
@@ -249,7 +251,7 @@ async function submitTickets(
         (${emails[3]}, ${names[3]}, ${paymentMethod}, ${phone}, ${TicketType.GROUP})
       RETURNING *
     `;
-    const ids = res.rows.map((row: any) => row.id);
+    const ids = res.map((row: any) => row.id);
 
     return Response.json({ success: true, ids });
   } catch (err: any) {

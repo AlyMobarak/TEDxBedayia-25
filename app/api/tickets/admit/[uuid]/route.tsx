@@ -1,5 +1,5 @@
 import { EVENT_DATE } from "@/app/metadata";
-import { sql } from "@vercel/postgres";
+import { Pool } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 
 // Handler for GET requests
@@ -57,11 +57,20 @@ export async function GET(
   // Check if this is a full UUID (36 chars with dashes) or partial
   const isFullUUID = uuid.length === 36;
 
-  // Use postgres client with transaction and row-level locking
-  const client = await sql.connect();
+  // Custom error to carry HTTP status out of the callback
+  class AdmitError extends Error {
+    constructor(
+      public readonly httpStatus: number,
+      message: string,
+    ) {
+      super(message);
+    }
+  }
+
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const client = await pool.connect();
 
   try {
-    // Start transaction
     await client.query("BEGIN");
 
     // Lock matching row(s) to prevent concurrent admission attempts
@@ -69,34 +78,26 @@ export async function GET(
     let lockResult;
     if (isFullUUID) {
       lockResult = await client.query(
-        `SELECT * FROM attendees WHERE uuid = $1 FOR UPDATE LIMIT 2`,
+        "SELECT * FROM attendees WHERE uuid = $1 FOR UPDATE LIMIT 2",
         [uuid],
       );
     } else {
       // Partial UUID: match prefix safely using LEFT(...) and limit locked rows
       lockResult = await client.query(
-        `SELECT * FROM attendees
-           WHERE LEFT(uuid::text, $2) = $1
-           FOR UPDATE
-           LIMIT 2`,
-        [uuid, uuid.length],
+        "SELECT * FROM attendees WHERE LEFT(uuid::text, $1) = $2 FOR UPDATE LIMIT 2",
+        [uuid.length, uuid],
       );
     }
 
-    if (lockResult.rowCount === 0) {
-      await client.query("ROLLBACK");
-      return NextResponse.json(
-        { error: "Applicant not found." },
-        { status: 404, headers: headers },
-      );
+    if (lockResult.rows.length === 0) {
+      throw new AdmitError(404, "Applicant not found.");
     }
 
     // Check for multiple matches (only possible with partial UUID)
-    if (lockResult.rowCount && lockResult.rowCount > 1) {
-      await client.query("ROLLBACK");
-      return NextResponse.json(
-        { error: "Multiple tickets found, please insert the full UUID." },
-        { status: 400, headers: headers },
+    if (lockResult.rows.length > 1) {
+      throw new AdmitError(
+        400,
+        "Multiple tickets found, please insert the full UUID.",
       );
     }
 
@@ -104,11 +105,7 @@ export async function GET(
 
     // Check if attendee has paid
     if (!attendee.paid) {
-      await client.query("ROLLBACK");
-      return NextResponse.json(
-        { error: "Applicant has not even paid." },
-        { status: 400, headers: headers },
-      );
+      throw new AdmitError(400, "Applicant has not even paid.");
     }
 
     // Check if already admitted
@@ -125,40 +122,39 @@ export async function GET(
           { status: 200, headers: headers },
         );
       }
-      await client.query("ROLLBACK");
-      return NextResponse.json(
-        { error: "Applicant already admitted." },
-        { status: 400, headers: headers },
-      );
+      throw new AdmitError(400, "Applicant already admitted.");
     }
 
     // Admit the attendee (use attendee.uuid from locked row for partial UUID support)
-    const result = await client.query(
+    const updateResult = await client.query(
       `UPDATE attendees 
-       SET admitted_at = NOW(), admitted_by = $1 
-       WHERE uuid = $2 
-         AND paid = TRUE 
-         AND admitted_at IS NULL
-       RETURNING *`,
+         SET admitted_at = NOW(), admitted_by = $1 
+         WHERE uuid = $2 
+           AND paid = TRUE 
+           AND admitted_at IS NULL
+         RETURNING *`,
       [deviceUID, attendee.uuid],
     );
 
-    if (result.rowCount === 0) {
-      await client.query("ROLLBACK");
-      return NextResponse.json(
-        { error: "Applicant is not eligible for admission." },
-        { status: 400, headers: headers },
-      );
+    if (updateResult.rows.length === 0) {
+      throw new AdmitError(400, "Applicant is not eligible for admission.");
     }
-    // Commit transaction
+
     await client.query("COMMIT");
 
     return NextResponse.json(
-      { success: true, applicant: result.rows[0] },
+      { success: true, applicant: updateResult.rows[0] },
       { status: 200, headers: headers },
     );
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
+
+    if (error instanceof AdmitError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.httpStatus, headers: headers },
+      );
+    }
     console.error("Error:", error);
     return NextResponse.json(
       { error: "An Error Occurred." },
@@ -166,6 +162,7 @@ export async function GET(
     );
   } finally {
     client.release();
+    await pool.end();
   }
 }
 

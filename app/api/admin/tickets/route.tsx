@@ -1,7 +1,9 @@
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { canUserAccess, ProtectedResource } from "../../utils/auth";
 import { validateCsrf } from "../../utils/csrf";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 export async function POST() {
   return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
@@ -17,7 +19,7 @@ export async function GET(request: NextRequest) {
     return Response.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  const { rows } =
+  const rows =
     await sql`SELECT email FROM attendees WHERE paid = false AND type NOT IN ('speaker', 'discounted', 'giveaway');`;
   let emails = "";
   rows.forEach((row) => {

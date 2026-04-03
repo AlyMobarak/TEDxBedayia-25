@@ -1,9 +1,11 @@
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { type NextRequest } from "next/server";
 import { canUserAccess, ProtectedResource } from "../../utils/auth";
 import { validateCsrf } from "../../utils/csrf";
 import { sendBatchEmail } from "../payment-reciever/eTicketEmail";
 import { safeRandUUID } from "../payment-reciever/main";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 export async function GET(request: NextRequest) {
   const csrfError = validateCsrf(request);
@@ -22,27 +24,27 @@ export async function GET(request: NextRequest) {
 
   try {
     let q = await sql`SELECT * FROM attendees WHERE id = ${id}`;
-    if (q.rowCount !== 1) {
+    if (q.length !== 1) {
       return Response.json({ message: "Attendee not found." }, { status: 404 });
     }
 
-    if (q.rows[0].uuid === null && q.rows[0].paid == true) {
+    if (q[0].uuid === null && q[0].paid == true) {
       let uuid = await safeRandUUID();
       await sql`UPDATE attendees SET uuid = ${uuid} WHERE id = ${id}`;
-      q.rows[0].uuid = uuid;
+      q[0].uuid = uuid;
     }
 
     await sendBatchEmail([
       {
-        email: q.rows[0].email,
-        fullName: q.rows[0].full_name,
-        uuid: q.rows[0].uuid,
-        id: String(q.rows[0].id),
+        email: q[0].email,
+        fullName: q[0].full_name,
+        uuid: q[0].uuid,
+        id: String(q[0].id),
       },
     ]);
     return Response.json(
-      { message: `Email sent to ${q.rows[0].email}.` },
-      { status: 200 }
+      { message: `Email sent to ${q[0].email}.` },
+      { status: 200 },
     );
   } catch (error) {
     return Response.json({ message: "Error occurred." }, { status: 400 });

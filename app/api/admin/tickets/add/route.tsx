@@ -1,6 +1,5 @@
-import { sql } from "@vercel/postgres";
+import { Pool } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
-import { PaymentMethodKey } from "../../../../payment-methods";
 import { TicketType } from "../../../../ticket-types";
 import { price } from "../../../tickets/prices";
 import { canUserAccess, ProtectedResource } from "../../../utils/auth";
@@ -10,7 +9,7 @@ import {
   verifyEmail,
 } from "../../../utils/input-sanitization";
 import { scheduleBackgroundEmails } from "../../payment-reciever/eTicketEmail";
-import { generateBatchUUIDs, safeRandUUID } from "../../payment-reciever/main";
+import { generateBatchUUIDs } from "../../payment-reciever/main";
 
 // Constants
 const GROUP_SIZE = 4;
@@ -113,7 +112,8 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Database Insertion
-    const client = await sql.connect();
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    const client = await pool.connect();
 
     try {
       await client.query("BEGIN");
@@ -197,7 +197,7 @@ export async function POST(req: NextRequest) {
         ids: insertedIds,
       });
     } catch (e) {
-      await client.query("ROLLBACK");
+      await client.query("ROLLBACK").catch(() => {});
       console.error("Error creating tickets:", e);
       return NextResponse.json(
         { message: "Database error occurred." },
@@ -205,6 +205,7 @@ export async function POST(req: NextRequest) {
       );
     } finally {
       client.release();
+      await pool.end();
     }
   } catch (error) {
     console.error("API Error:", error);

@@ -1,10 +1,12 @@
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { canUserAccess, ProtectedResource } from "../../utils/auth";
 import { validateCsrf } from "../../utils/csrf";
 import { sendBookingConfirmation } from "../../utils/email-helper";
 import { sendBatchEmail } from "../payment-reciever/eTicketEmail";
 import { safeRandUUID } from "../payment-reciever/main";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 export async function POST(request: NextRequest) {
   const csrfError = validateCsrf(request);
@@ -19,28 +21,28 @@ export async function POST(request: NextRequest) {
   try {
     const result = await sql.query(
       "UPDATE attendees SET email = $1 WHERE id = $2 RETURNING *",
-      [email, id]
+      [email, id],
     );
 
-    if (result.rowCount === 0) {
+    if (result.length === 0) {
       return NextResponse.json(
         { error: "Applicant not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
     if (
-      result.rows[0].paid === false &&
-      result.rows[0].payment_method.toString().split("@")[0] === "CASH"
+      result[0].paid === false &&
+      result[0].payment_method.toString().split("@")[0] === "CASH"
     ) {
       await sendBookingConfirmation(
-        result.rows[0].payment_method,
-        result.rows[0].full_name,
+        result[0].payment_method,
+        result[0].full_name,
         email,
-        result.rows[0].id,
-        result.rows[0].type
+        result[0].id,
+        result[0].type,
       );
-    } else if (result.rows[0].paid === true) {
+    } else if (result[0].paid === true) {
       const newUUID = await safeRandUUID();
       await sql`
         UPDATE attendees
@@ -50,16 +52,16 @@ export async function POST(request: NextRequest) {
       await sendBatchEmail([
         {
           email,
-          fullName: result.rows[0].full_name,
+          fullName: result[0].full_name,
           uuid: newUUID,
-          id: String(result.rows[0].id),
+          id: String(result[0].id),
         },
       ]);
     }
 
     return NextResponse.json(
-      { success: true, applicant: result.rows[0] },
-      { status: 200 }
+      { success: true, applicant: result[0] },
+      { status: 200 },
     );
   } catch (error) {
     console.error("Error:", error);

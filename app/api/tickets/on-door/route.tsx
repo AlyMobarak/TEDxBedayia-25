@@ -1,6 +1,6 @@
 import { EVENT_DATE, INDIVIDUAL_TICKET_PRICE } from "@/app/metadata";
 import { PaymentMethodKey, paymentOptions } from "@/app/payment-methods";
-import { sql } from "@vercel/postgres";
+import { Pool } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { safeRandUUID } from "../../admin/payment-reciever/main";
 import {
@@ -120,26 +120,26 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Use postgres client with transaction for atomicity
-  const client = await sql.connect();
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const client = await pool.connect();
 
   try {
-    await client.query("BEGIN");
-
-    // Generate a unique UUID
+    // Generate a unique UUID before starting the transaction
     const uuid = await safeRandUUID();
+
+    await client.query("BEGIN");
 
     // Insert new attendee as paid & admitted on-door
     const result = await client.query(
       `INSERT INTO attendees (email, full_name, phone, type, payment_method, paid, uuid, sent, admitted_at, admitted_by)
-       VALUES ($1, $2, $3, 'individual', $4, TRUE, $5, TRUE, NOW(), $6)
-       RETURNING *`,
+         VALUES ($1, $2, $3, 'individual', $4, TRUE, $5, TRUE, NOW(), $6)
+         RETURNING *`,
       [email, name, phone, paymentMethod, uuid, device],
     );
 
     await client.query(
-      `INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) VALUES ($1, $2, $2, NOW())`,
-      [paymentMethod, INDIVIDUAL_TICKET_PRICE],
+      `INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) VALUES ($1, $2, $3, NOW())`,
+      [paymentMethod, INDIVIDUAL_TICKET_PRICE, INDIVIDUAL_TICKET_PRICE],
     );
 
     await client.query("COMMIT");
@@ -157,6 +157,7 @@ export async function POST(request: NextRequest) {
     );
   } finally {
     client.release();
+    await pool.end();
   }
 }
 

@@ -1,4 +1,6 @@
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 export async function initiateCardPayment(
   name: string,
@@ -6,7 +8,7 @@ export async function initiateCardPayment(
   email: string,
   amount: number,
   ticketType: string,
-  attendeeId: string
+  attendeeId: string,
 ) {
   try {
     var myHeaders = new Headers();
@@ -53,7 +55,7 @@ export async function initiateCardPayment(
     const response = await fetch(
       process.env.PAYMOB_BASE_API_URL ||
         "https://accept.paymob.com/v1/intention/",
-      requestOptions
+      requestOptions,
     );
     const result = await response.json();
 
@@ -69,18 +71,21 @@ export async function initiateCardPayment(
       .toString()
       .split(",")
       .map((id) => parseInt(id, 10));
-    const arrayLiteral = `{${ids.join(",")}}`;
 
     const newMethod = "CARD@" + result.intention_order_id;
     const updated =
       (
-        await sql`
+        await sql.query(
+          `
           UPDATE attendees
-          SET payment_method = ${newMethod}
-          WHERE id = ANY(${arrayLiteral}::int[])
+          SET payment_method = $1
+          WHERE id = ANY($2::int[])
           AND paid = FALSE
-        `
-      ).rowCount === ids.length;
+          RETURNING id
+        `,
+          [newMethod, ids],
+        )
+      ).length === ids.length;
 
     if (!updated) {
       return Response.json(
@@ -88,7 +93,7 @@ export async function initiateCardPayment(
           message:
             "Failed to update attendee payment method. Please contact support.",
         },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
@@ -98,7 +103,7 @@ export async function initiateCardPayment(
       {
         paymentUrl,
       },
-      { status: 200 }
+      { status: 200 },
     );
   } catch (error) {
     console.error("Error initiating payment:", error);
@@ -106,7 +111,7 @@ export async function initiateCardPayment(
       { message: "Error occurred while trying to initiate payment." },
       {
         status: 500,
-      }
+      },
     );
   }
 }

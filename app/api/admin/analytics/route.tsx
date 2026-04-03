@@ -7,8 +7,10 @@ import {
   INDIVIDUAL_TICKET_PRICE,
   TEACHER_TICKET_PRICE,
 } from "@/app/metadata";
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 // Price mapping for revenue calculation
 const TICKET_PRICES: Record<string, number> = {
@@ -87,22 +89,22 @@ export async function GET(request: NextRequest) {
       await sql`SELECT COUNT(code) FROM rush_hour WHERE processed = TRUE`;
 
     // Calculate revenue by ticket type
-    const revenueByType = ticketsByType.rows.map((row) => ({
+    const revenueByType = ticketsByType.map((row) => ({
       ticketType: row.ticket_type,
       paidCount:
         parseInt(row.paid_count) +
         (row.ticket_type === "discounted"
-          ? parseInt(totalDiscountedCodes.rows[0].count)
+          ? parseInt(totalDiscountedCodes[0].count)
           : 0),
       totalCount:
         parseInt(row.total_count) +
         (row.ticket_type === "discounted"
-          ? parseInt(totalDiscountedCodes.rows[0].count)
+          ? parseInt(totalDiscountedCodes[0].count)
           : 0),
       revenue:
         (parseInt(row.paid_count) +
           (row.ticket_type === "discounted"
-            ? parseInt(totalDiscountedCodes.rows[0].count)
+            ? parseInt(totalDiscountedCodes[0].count)
             : 0)) *
         (TICKET_PRICES[row.ticket_type] || 0),
     }));
@@ -110,23 +112,20 @@ export async function GET(request: NextRequest) {
     const totalRevenue = revenueByType.reduce((sum, r) => sum + r.revenue, 0);
 
     // Calculate conversion rate
-    let stats = overallStats.rows[0];
+    let stats = overallStats[0];
     stats.total_bookings =
-      parseInt(stats.total_bookings) +
-      parseInt(totalDiscountedCodes.rows[0].count);
+      parseInt(stats.total_bookings) + parseInt(totalDiscountedCodes[0].count);
     stats.paid_tickets =
-      parseInt(stats.paid_tickets) +
-      parseInt(totalDiscountedCodes.rows[0].count);
+      parseInt(stats.paid_tickets) + parseInt(totalDiscountedCodes[0].count);
     stats.sent_tickets =
-      parseInt(stats.sent_tickets) +
-      parseInt(totalDiscountedCodes.rows[0].count);
+      parseInt(stats.sent_tickets) + parseInt(totalDiscountedCodes[0].count);
     const conversionRate =
       stats.total_bookings > 0
         ? Math.round((stats.paid_tickets / stats.total_bookings) * 100)
         : 0;
 
     return NextResponse.json({
-      salesOverTime: salesOverTime.rows.map((row) => ({
+      salesOverTime: salesOverTime.map((row) => ({
         date: row.date,
         paidCount: parseInt(row.paid_count),
         totalCount: parseInt(row.total_count),
@@ -140,12 +139,12 @@ export async function GET(request: NextRequest) {
         admittedCount: parseInt(stats.admitted_count),
         conversionRate,
       },
-      paymentMethods: paymentMethods.rows.map((row) => ({
+      paymentMethods: paymentMethods.map((row) => ({
         method: row.method,
         paidCount: parseInt(row.paid_count),
         totalCount: parseInt(row.total_count),
       })),
-      recentActivity: recentActivity.rows.map((row) => ({
+      recentActivity: recentActivity.map((row) => ({
         hour: row.hour,
         count: parseInt(row.count),
       })),
@@ -154,7 +153,7 @@ export async function GET(request: NextRequest) {
     console.error("Analytics error:", error);
     return NextResponse.json(
       { error: "Failed to fetch analytics" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

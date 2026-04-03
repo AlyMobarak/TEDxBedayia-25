@@ -1,12 +1,14 @@
 import { Applicant } from "@/app/admin/types/Applicant";
 import { EARLY_BIRD_UNTIL } from "@/app/metadata";
-import { sql, VercelPoolClient } from "@vercel/postgres";
+import { neon, Pool, PoolClient } from "@neondatabase/serverless";
 import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { TicketType } from "../../../ticket-types";
 import { price } from "../../tickets/prices";
 import { ResponseCode } from "../../utils/response-codes";
 import { scheduleBackgroundEmails } from "./eTicketEmail";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 // ============================================================================
 // Constants
@@ -85,7 +87,7 @@ function formatPaymentSourceForStorage(source: PaymentSource): string {
  * Much faster than generating one at a time.
  */
 export async function generateBatchUUIDs(
-  client: VercelPoolClient,
+  client: PoolClient,
   count: number,
 ): Promise<string[]> {
   if (count === 0) return [];
@@ -123,7 +125,7 @@ export async function generateBatchUUIDs(
  * For CASH payments, we additionally filter by email since CASH doesn't have a unique identifier.
  */
 async function fetchUnpaidAttendees(
-  client: VercelPoolClient,
+  client: PoolClient,
   fullPaymentMethod: string,
   method: string,
   identifier: string | null,
@@ -163,7 +165,7 @@ async function fetchUnpaidAttendees(
  * CASH can't reach this stage.
  */
 async function fetchUnpaidByIds(
-  client: VercelPoolClient,
+  client: PoolClient,
   ids: number[],
   fullPaymentMethod: string,
   paymentDate: Date,
@@ -193,7 +195,7 @@ async function fetchUnpaidByIds(
  * Returns a map of attendee ID -> group info.
  */
 async function fetchGroupsForAttendees(
-  client: VercelPoolClient,
+  client: PoolClient,
   attendeeIds: number[],
 ): Promise<Map<number, GroupInfo>> {
   if (attendeeIds.length === 0) return new Map();
@@ -223,7 +225,7 @@ async function fetchGroupsForAttendees(
  * Expands attendee list to include all group members for GROUP tickets.
  */
 async function expandGroupMembers(
-  client: VercelPoolClient,
+  client: PoolClient,
   attendees: UnpaidAttendee[],
   fullPaymentMethod: string,
   paymentDate: Date,
@@ -303,7 +305,7 @@ function analyzeUnpaidAttendees(attendees: UnpaidAttendee[]): {
  * Returns ambiguity data for 431 response if needed.
  */
 async function checkForAmbiguity(
-  client: VercelPoolClient,
+  client: PoolClient,
   unpaid: UnpaidAttendee[],
   amount: number,
   total: number,
@@ -375,7 +377,7 @@ async function checkForAmbiguity(
  * Collects unique groups from attendees and returns grouped data.
  */
 async function collectUniqueGroups(
-  client: VercelPoolClient,
+  client: PoolClient,
   groupAttendees: UnpaidAttendee[],
 ): Promise<Map<number, number[]>> {
   if (groupAttendees.length === 0) return new Map();
@@ -399,7 +401,7 @@ async function collectUniqueGroups(
  * Uses bulk operations for efficiency.
  */
 async function processPayments(
-  client: VercelPoolClient,
+  client: PoolClient,
   unpaid: UnpaidAttendee[],
   amount: number,
   paymentDate: Date,
@@ -534,16 +536,18 @@ export async function pay(
     );
   }
 
-  const client = await sql.connect();
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const client = await pool.connect();
 
   try {
     // Handle refunds (negative amounts)
     if (amountNum < 0) {
       const streamName = formatPaymentSourceForStorage(paymentSource);
-      await client.sql`
-        INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) 
-        VALUES (${streamName}, 0, ${amount}, ${date})
-      `;
+      await client.query(
+        `INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) 
+        VALUES ($1, $2, $3, $4)`,
+        [streamName, 0, amount, date],
+      );
       return NextResponse.json(
         { refund: true, message: "Refund Inserted." },
         { status: 200 },
@@ -689,10 +693,10 @@ export async function pay(
     // Log to pay_backup BEFORE sending emails (ensures payment is recorded)
     const streamName = formatPaymentSourceForStorage(paymentSource);
     if (amountNum !== 0) {
-      await client.sql`
+      await client.query(`
         INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) 
         VALUES (${streamName}, ${paidAmount}, ${amount}, ${date})
-      `;
+      `);
     }
 
     // Commit transaction - payment is now final
@@ -730,7 +734,7 @@ export async function pay(
 export async function safeRandUUID(): Promise<string> {
   let uuid = randomUUID();
   let query = await sql`SELECT * FROM attendees WHERE uuid = ${uuid}`;
-  while (query.rows.length !== 0) {
+  while (query.length !== 0) {
     uuid = randomUUID();
     query = await sql`SELECT * FROM attendees WHERE uuid = ${uuid}`;
   }

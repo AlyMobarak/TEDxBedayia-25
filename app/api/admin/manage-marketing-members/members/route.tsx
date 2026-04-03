@@ -6,9 +6,11 @@ import {
   getMarketingMemberPass,
   ProtectedResource,
 } from "@/app/api/utils/auth";
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import crypto from "crypto";
 import { NextResponse, type NextRequest } from "next/server";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 export const maxDuration = 15;
 
@@ -21,12 +23,12 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json(
     {
-      members: members.rows.map((row) => {
+      members: members.map((row) => {
         row.password = getMarketingMemberPass(row.username);
         return row;
       }),
     },
-    { status: 200 }
+    { status: 200 },
   );
 }
 
@@ -54,11 +56,11 @@ export async function POST(request: NextRequest) {
   return NextResponse.json(
     {
       member: {
-        ...newMember.rows[0],
-        password: getMarketingMemberPass(newMember.rows[0].username),
+        ...newMember[0],
+        password: getMarketingMemberPass(newMember[0].username),
       },
     },
-    { status: 201 }
+    { status: 201 },
   );
 }
 
@@ -79,7 +81,7 @@ export async function DELETE(request: NextRequest) {
     await sql`ALTER SEQUENCE marketing_members_id_seq RESTART WITH 1`;
     return NextResponse.json(
       { message: "All members deleted." },
-      { status: 200 }
+      { status: 200 },
     );
   }
 
@@ -87,9 +89,9 @@ export async function DELETE(request: NextRequest) {
         DELETE FROM marketing_members WHERE id = ${Number(id)} RETURNING *;
     `;
 
-  if (deletedMember.rowCount === 0) {
+  if (deletedMember.length === 0) {
     return NextResponse.json({ message: "Member not found." }, { status: 404 });
   }
 
-  return NextResponse.json({ member: deletedMember.rows[0] }, { status: 200 });
+  return NextResponse.json({ member: deletedMember[0] }, { status: 200 });
 }

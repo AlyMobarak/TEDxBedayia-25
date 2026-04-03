@@ -1,11 +1,13 @@
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import argon2 from "argon2";
 import { ProtectedResource } from "../../utils/auth";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 // To be called after verification of permissions
 export async function createAccountHolder(
   username: string,
-  password: string
+  password: string,
 ): Promise<{ id?: number }> {
   try {
     // Hash the password
@@ -20,7 +22,7 @@ export async function createAccountHolder(
       await sql`INSERT INTO account_holders (username, hashed_password) VALUES (${username}, ${hashedPassword}) RETURNING id`;
 
     return {
-      id: result.rows[0].id,
+      id: result[0].id,
     };
   } catch (err) {
     console.error("Error creating user", err);
@@ -30,7 +32,7 @@ export async function createAccountHolder(
 
 export async function setPaymentMethodsToAccountHolder(
   accountHolderId: number,
-  paymentMethods: string[]
+  paymentMethods: string[],
 ): Promise<boolean> {
   try {
     const query = `
@@ -50,7 +52,7 @@ export async function setPaymentMethodsToAccountHolder(
 
 export async function setAdditionalScopesToAccountHolder(
   accountHolderId: number,
-  additionalScopes: ProtectedResource[]
+  additionalScopes: ProtectedResource[],
 ): Promise<boolean> {
   try {
     const query = `
@@ -70,7 +72,7 @@ export async function setAdditionalScopesToAccountHolder(
 
 export async function getAccountHolderInfo(
   username: string,
-  password: string
+  password: string,
 ): Promise<
   | {
       id: number;
@@ -82,17 +84,17 @@ export async function getAccountHolderInfo(
 > {
   const result =
     await sql`SELECT * FROM account_holders WHERE username = ${username}`;
-  const hashedPassword = result.rows[0]?.hashed_password;
+  const hashedPassword = result[0]?.hashed_password;
 
   if (!hashedPassword) return;
 
   // Verify password
   if (await argon2.verify(hashedPassword, password)) {
     return {
-      id: result.rows[0].id,
-      username: result.rows[0].username,
-      allowed_methods: result.rows[0].allowed_methods,
-      additional_scopes: result.rows[0].additional_scopes,
+      id: result[0].id,
+      username: result[0].username,
+      allowed_methods: result[0].allowed_methods,
+      additional_scopes: result[0].additional_scopes,
     };
   } else {
     return;
@@ -110,7 +112,7 @@ export async function getAllAccountHolders(): Promise<
   const result =
     await sql`SELECT id, username, allowed_methods, additional_scopes FROM account_holders`;
   try {
-    return result.rows.map((row) => ({
+    return result.map((row) => ({
       id: row.id,
       username: row.username,
       allowed_methods: row.allowed_methods,
