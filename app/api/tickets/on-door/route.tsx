@@ -1,6 +1,6 @@
 import { EVENT_DATE, INDIVIDUAL_TICKET_PRICE } from "@/app/metadata";
 import { PaymentMethodKey, paymentOptions } from "@/app/payment-methods";
-import { neon } from "@neondatabase/serverless";
+import { Pool } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { safeRandUUID } from "../../admin/payment-reciever/main";
 import {
@@ -8,8 +8,6 @@ import {
   checkSafety,
   verifyEmail,
 } from "../../utils/input-sanitization";
-
-const sql = neon(`${process.env.DATABASE_URL}`);
 
 // CORS headers for Usher App access
 function corsHeaders(): Headers {
@@ -122,33 +120,44 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const client = await pool.connect();
+
   try {
     // Generate a unique UUID before starting the transaction
     const uuid = await safeRandUUID();
 
-    const [attendee] = await sql.transaction(async (tx) => {
-      // Insert new attendee as paid & admitted on-door
-      const result = await tx`
-        INSERT INTO attendees (email, full_name, phone, type, payment_method, paid, uuid, sent, admitted_at, admitted_by)
-         VALUES (${email}, ${name}, ${phone}, 'individual', ${paymentMethod}, TRUE, ${uuid}, TRUE, NOW(), ${device})
-         RETURNING *`;
+    await client.query("BEGIN");
 
-      await tx`
-        INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) VALUES (${paymentMethod}, ${INDIVIDUAL_TICKET_PRICE}, ${INDIVIDUAL_TICKET_PRICE}, NOW())`;
+    // Insert new attendee as paid & admitted on-door
+    const result = await client.query(
+      `INSERT INTO attendees (email, full_name, phone, type, payment_method, paid, uuid, sent, admitted_at, admitted_by)
+         VALUES ($1, $2, $3, 'individual', $4, TRUE, $5, TRUE, NOW(), $6)
+         RETURNING *`,
+      [email, name, phone, paymentMethod, uuid, device],
+    );
 
-      return result;
-    });
+    await client.query(
+      `INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) VALUES ($1, $2, $3, NOW())`,
+      [paymentMethod, INDIVIDUAL_TICKET_PRICE, INDIVIDUAL_TICKET_PRICE],
+    );
+
+    await client.query("COMMIT");
 
     return NextResponse.json(
-      { success: true, applicant: attendee },
+      { success: true, applicant: result.rows[0] },
       { status: 200, headers },
     );
   } catch (error) {
+    await client.query("ROLLBACK");
     console.error("On-door ticket error:", error);
     return NextResponse.json(
       { error: "An Error Occurred." },
       { status: 502, headers },
     );
+  } finally {
+    client.release();
+    await pool.end();
   }
 }
 

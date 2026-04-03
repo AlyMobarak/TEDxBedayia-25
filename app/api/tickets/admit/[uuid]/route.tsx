@@ -1,8 +1,6 @@
 import { EVENT_DATE } from "@/app/metadata";
-import { neon } from "@neondatabase/serverless";
+import { Pool } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
-
-const sql = neon(`${process.env.DATABASE_URL}`);
 
 // Handler for GET requests
 export async function GET(
@@ -59,7 +57,7 @@ export async function GET(
   // Check if this is a full UUID (36 chars with dashes) or partial
   const isFullUUID = uuid.length === 36;
 
-  // Custom error to carry HTTP status out of the transaction callback
+  // Custom error to carry HTTP status out of the callback
   class AdmitError extends Error {
     constructor(
       public readonly httpStatus: number,
@@ -69,76 +67,88 @@ export async function GET(
     }
   }
 
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const client = await pool.connect();
+
   try {
-    const txResult = await sql.transaction(async (tx) => {
-      // Lock matching row(s) to prevent concurrent admission attempts
-      // Use exact match for full UUID, prefix match for partial
-      let lockResult;
-      if (isFullUUID) {
-        lockResult = await tx`
-          SELECT * FROM attendees WHERE uuid = ${uuid} FOR UPDATE LIMIT 2`;
-      } else {
-        // Partial UUID: match prefix safely using LEFT(...) and limit locked rows
-        lockResult = await tx`
-          SELECT * FROM attendees
-             WHERE LEFT(uuid::text, ${uuid.length}) = ${uuid}
-             FOR UPDATE
-             LIMIT 2`;
-      }
+    await client.query("BEGIN");
 
-      if (lockResult.length === 0) {
-        throw new AdmitError(404, "Applicant not found.");
-      }
+    // Lock matching row(s) to prevent concurrent admission attempts
+    // Use exact match for full UUID, prefix match for partial
+    let lockResult;
+    if (isFullUUID) {
+      lockResult = await client.query(
+        "SELECT * FROM attendees WHERE uuid = $1 FOR UPDATE LIMIT 2",
+        [uuid],
+      );
+    } else {
+      // Partial UUID: match prefix safely using LEFT(...) and limit locked rows
+      lockResult = await client.query(
+        "SELECT * FROM attendees WHERE LEFT(uuid::text, $1) = $2 FOR UPDATE LIMIT 2",
+        [uuid.length, uuid],
+      );
+    }
 
-      // Check for multiple matches (only possible with partial UUID)
-      if (lockResult.length > 1) {
-        throw new AdmitError(
-          400,
-          "Multiple tickets found, please insert the full UUID.",
+    if (lockResult.rows.length === 0) {
+      throw new AdmitError(404, "Applicant not found.");
+    }
+
+    // Check for multiple matches (only possible with partial UUID)
+    if (lockResult.rows.length > 1) {
+      throw new AdmitError(
+        400,
+        "Multiple tickets found, please insert the full UUID.",
+      );
+    }
+
+    const attendee = lockResult.rows[0];
+
+    // Check if attendee has paid
+    if (!attendee.paid) {
+      throw new AdmitError(400, "Applicant has not even paid.");
+    }
+
+    // Check if already admitted
+    if (attendee.admitted_at !== null) {
+      // Grace period: allow same device to re-fetch within 2.5 seconds
+      const admittedTime = new Date(attendee.admitted_at).getTime();
+      if (
+        Date.now() - admittedTime < 2.5 * 1000 &&
+        attendee.admitted_by === deviceUID
+      ) {
+        await client.query("COMMIT");
+        return NextResponse.json(
+          { success: true, applicant: attendee },
+          { status: 200, headers: headers },
         );
       }
+      throw new AdmitError(400, "Applicant already admitted.");
+    }
 
-      const attendee = lockResult[0];
-
-      // Check if attendee has paid
-      if (!attendee.paid) {
-        throw new AdmitError(400, "Applicant has not even paid.");
-      }
-
-      // Check if already admitted
-      if (attendee.admitted_at !== null) {
-        // Grace period: allow same device to re-fetch within 2.5 seconds
-        const admittedTime = new Date(attendee.admitted_at).getTime();
-        if (
-          Date.now() - admittedTime < 2.5 * 1000 &&
-          attendee.admitted_by === deviceUID
-        ) {
-          return { applicant: attendee };
-        }
-        throw new AdmitError(400, "Applicant already admitted.");
-      }
-
-      // Admit the attendee (use attendee.uuid from locked row for partial UUID support)
-      const updateResult = await tx`
-        UPDATE attendees 
-         SET admitted_at = NOW(), admitted_by = ${deviceUID} 
-         WHERE uuid = ${attendee.uuid} 
+    // Admit the attendee (use attendee.uuid from locked row for partial UUID support)
+    const updateResult = await client.query(
+      `UPDATE attendees 
+         SET admitted_at = NOW(), admitted_by = $1 
+         WHERE uuid = $2 
            AND paid = TRUE 
            AND admitted_at IS NULL
-         RETURNING *`;
+         RETURNING *`,
+      [deviceUID, attendee.uuid],
+    );
 
-      if (updateResult.length === 0) {
-        throw new AdmitError(400, "Applicant is not eligible for admission.");
-      }
+    if (updateResult.rows.length === 0) {
+      throw new AdmitError(400, "Applicant is not eligible for admission.");
+    }
 
-      return { applicant: updateResult[0] };
-    });
+    await client.query("COMMIT");
 
     return NextResponse.json(
-      { success: true, applicant: txResult.applicant },
+      { success: true, applicant: updateResult.rows[0] },
       { status: 200, headers: headers },
     );
   } catch (error) {
+    await client.query("ROLLBACK");
+
     if (error instanceof AdmitError) {
       return NextResponse.json(
         { error: error.message },
@@ -150,6 +160,9 @@ export async function GET(
       { error: "An Error Occurred." },
       { status: 502, headers: headers },
     );
+  } finally {
+    client.release();
+    await pool.end();
   }
 }
 

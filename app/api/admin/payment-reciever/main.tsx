@@ -1,6 +1,6 @@
 import { Applicant } from "@/app/admin/types/Applicant";
 import { EARLY_BIRD_UNTIL } from "@/app/metadata";
-import { neon } from "@neondatabase/serverless";
+import { neon, Pool } from "@neondatabase/serverless";
 import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { TicketType } from "../../../ticket-types";
@@ -538,14 +538,29 @@ export async function pay(
     );
   }
 
+  // Custom error to carry HTTP status out of the callback
+  class PaymentError extends Error {
+    constructor(
+      public readonly httpStatus: number,
+      message: string,
+      public readonly data?: any,
+    ) {
+      super(message);
+    }
+  }
+
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const client = await pool.connect();
+
   try {
     // Handle refunds (negative amounts)
     if (amountNum < 0) {
       const streamName = formatPaymentSourceForStorage(paymentSource);
-      await sql`
-        INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) 
-        VALUES (${streamName}, 0, ${amount}, ${date})
-      `;
+      await client.query(
+        `INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) 
+        VALUES ($1, $2, $3, $4)`,
+        [streamName, 0, amount, date],
+      );
       return NextResponse.json(
         { refund: true, message: "Refund Inserted." },
         { status: 200 },
@@ -553,7 +568,7 @@ export async function pay(
     }
 
     // Start transaction for payment processing
-    await sql.query("BEGIN");
+    await client.query("BEGIN");
 
     // Fetch unpaid attendees
     let unpaid = await fetchUnpaidAttendees(
@@ -564,13 +579,9 @@ export async function pay(
     );
 
     if (unpaid.length === 0) {
-      await sql.query("ROLLBACK");
-      return NextResponse.json(
-        {
-          message:
-            "Not found. Try Again or Refund (Ticket isn't marked as paid yet).",
-        },
-        { status: 400 },
+      throw new PaymentError(
+        400,
+        "Not found. Try Again or Refund (Ticket isn't marked as paid yet).",
       );
     }
 
@@ -587,11 +598,7 @@ export async function pay(
       unpaid = filtered;
 
       if (unpaid.length === 0) {
-        await sql.query("ROLLBACK");
-        return NextResponse.json(
-          { message: "Nobody to pay for." },
-          { status: 400 },
-        );
+        throw new PaymentError(400, "Nobody to pay for.");
       }
     } else {
       // Expand to include all group members if dealing with groups
@@ -614,15 +621,13 @@ export async function pay(
       );
 
       if (ambiguity) {
-        await sql.query("ROLLBACK");
-        return NextResponse.json(
+        throw new PaymentError(
+          ResponseCode.TICKET_AMBIGUITY,
+          "Not enough money to pay for all tickets. Identify using IDs.",
           {
-            message:
-              "Not enough money to pay for all tickets. Identify using IDs.",
             found: ambiguity.found,
             groupMembers: ambiguity.groupMembers,
           },
-          { status: ResponseCode.TICKET_AMBIGUITY },
         );
       }
     }
@@ -652,15 +657,13 @@ export async function pay(
           }
         }
 
-        await sql.query("ROLLBACK");
-        return NextResponse.json(
+        throw new PaymentError(
+          ResponseCode.TICKET_AMBIGUITY,
+          "Not enough money to pay for all tickets. Identify using IDs.",
           {
-            message:
-              "Not enough money to pay for all tickets. Identify using IDs.",
             found,
             groupMembers,
           },
-          { status: ResponseCode.TICKET_AMBIGUITY },
         );
       }
     }
@@ -673,26 +676,24 @@ export async function pay(
     );
 
     if (paidAmount === 0) {
-      await sql.query("ROLLBACK");
-      return NextResponse.json(
-        {
-          message: `Nothing was paid. To pay for all tickets: ${analysis.total} EGP. Paying for only one ticket (or an entire group ticket) is accepted as well.`,
-        },
-        { status: 400 },
+      throw new PaymentError(
+        400,
+        `Nothing was paid. To pay for all tickets: ${analysis.total} EGP. Paying for only one ticket (or an entire group ticket) is accepted as well.`,
       );
     }
 
     // Log to pay_backup BEFORE sending emails (ensures payment is recorded)
     const streamName = formatPaymentSourceForStorage(paymentSource);
     if (amountNum !== 0) {
-      await sql`
-        INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) 
-        VALUES (${streamName}, ${paidAmount}, ${amount}, ${date})
-      `;
+      await client.query(
+        `INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) 
+        VALUES ($1, $2, $3, $4)`,
+        [streamName, paidAmount, amount, date],
+      );
     }
 
     // Commit transaction - payment is now final
-    await sql.query("COMMIT");
+    await client.query("COMMIT");
 
     // Send emails (after commit, so payment is safe even if emails fail)
     sendEmails(paidAttendees);
@@ -706,7 +707,17 @@ export async function pay(
       { status: 200 },
     );
   } catch (e) {
-    await sql.query("ROLLBACK").catch(() => {});
+    await client.query("ROLLBACK").catch(() => {});
+
+    if (e instanceof PaymentError) {
+      return NextResponse.json(
+        {
+          message: e.message,
+          ...(e.data ? e.data : {}),
+        },
+        { status: e.httpStatus },
+      );
+    }
     console.error("Payment processing error:", e);
     return NextResponse.json(
       {
@@ -714,6 +725,9 @@ export async function pay(
       },
       { status: 500 },
     );
+  } finally {
+    client.release();
+    await pool.end();
   }
 }
 
