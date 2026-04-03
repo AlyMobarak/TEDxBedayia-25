@@ -4,7 +4,6 @@
 
 - Next.js App Router project (`app/**`) with client-heavy booking flows (`app/book`, `app/book/group`) and admin/marketing portals under `app/admin` and `app/marketing`.
 - Server logic lives in `app/api/**`; each subfolder mirrors a business domain (tickets, payments, marketing, qr, utils) and returns `Response`/`NextResponse` objects.
-- Data persistence is through Vercel Postgres tables such as `attendees`, `groups`, `rush_hour`, `marketing_members`, `account_holders`, and `pay_backup` accessed via `@vercel/postgres` tagged queries.
 - Shared constants (event dates, ticket prices, phone numbers) live in `app/metadata.tsx` and ripple through pricing (`app/api/tickets/price/prices.tsx`) and UI copy.
 
 ## Critical Flows
