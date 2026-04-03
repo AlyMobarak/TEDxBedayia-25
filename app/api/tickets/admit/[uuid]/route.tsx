@@ -147,7 +147,7 @@ export async function GET(
       { status: 200, headers: headers },
     );
   } catch (error) {
-    await client.query("ROLLBACK");
+    await client.query("ROLLBACK").catch(() => {});
 
     if (error instanceof AdmitError) {
       return NextResponse.json(

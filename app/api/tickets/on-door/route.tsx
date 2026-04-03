@@ -149,7 +149,7 @@ export async function POST(request: NextRequest) {
       { status: 200, headers },
     );
   } catch (error) {
-    await client.query("ROLLBACK");
+    await client.query("ROLLBACK").catch(() => {});
     console.error("On-door ticket error:", error);
     return NextResponse.json(
       { error: "An Error Occurred." },

@@ -123,7 +123,7 @@ export async function POST(req: NextRequest) {
 
       let uuids: string[] = [];
       if (isPaid) {
-        uuids = await generateBatchUUIDs(attendees.length);
+        uuids = await generateBatchUUIDs(client, attendees.length);
       }
 
       for (const attendee of attendees) {
@@ -197,7 +197,7 @@ export async function POST(req: NextRequest) {
         ids: insertedIds,
       });
     } catch (e) {
-      await client.query("ROLLBACK");
+      await client.query("ROLLBACK").catch(() => {});
       console.error("Error creating tickets:", e);
       return NextResponse.json(
         { message: "Database error occurred." },
