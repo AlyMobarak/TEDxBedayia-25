@@ -5,7 +5,7 @@ import {
   DISCOUNTED_TICKET_PRICE,
   INDIVIDUAL_TICKET_PRICE,
 } from "@/app/metadata";
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { scheduleBackgroundEmails } from "../../payment-reciever/eTicketEmail";
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let client = await sql.connect();
+    const client = neon(process.env.DATABASE_URL!);
     // If paid amount is less than total due, return error
     // 1. Calculate the Total Due dynamically
     const totalDueResult = await client.query(
@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
     );
 
     // 2. Extract the sum (handle potential null if no rows found)
-    const totalDue = Number(totalDueResult.rows[0].total_due) || 0;
+    const totalDue = Number(totalDueResult[0].total_due) || 0;
 
     // 3. Perform the validation check
     if (paid !== totalDue) {
@@ -75,10 +75,10 @@ export async function POST(request: NextRequest) {
 
     let stream = "Marketing@" + memberId;
 
-    client.sql`INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) VALUES (${stream}, ${paid}, ${paid}, NOW())`;
+    client`INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) VALUES (${stream}, ${paid}, ${paid}, NOW())`;
 
     const results = await Promise.all(
-      result.rows.map(async (row) => {
+      result.map(async (row) => {
         try {
           const attendeeId = row.attendee_id;
           if (!attendeeId) return null;
@@ -87,17 +87,17 @@ export async function POST(request: NextRequest) {
             [randomUUID(), attendeeId],
           );
           // Check if any rows were actually updated
-          if (attendee.rows.length === 0) {
+          if (attendee.length === 0) {
             console.log(
               `[MANAGE MARKETING] Attendee ${attendeeId} already paid or not found`,
             );
             return null;
           }
           return {
-            fullName: attendee.rows[0].full_name,
-            email: attendee.rows[0].email,
+            fullName: attendee[0].full_name,
+            email: attendee[0].email,
             id: attendeeId,
-            uuid: attendee.rows[0].uuid,
+            uuid: attendee[0].uuid,
           };
         } catch (error) {
           console.error(
@@ -116,8 +116,6 @@ export async function POST(request: NextRequest) {
     );
 
     scheduleBackgroundEmails(emailRecipients);
-
-    client.release();
 
     return NextResponse.json({ message: "Success." }, { status: 200 });
   } catch (error) {

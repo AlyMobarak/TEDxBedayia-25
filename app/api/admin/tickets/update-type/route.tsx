@@ -1,7 +1,9 @@
 import { canUserAccess, ProtectedResource } from "@/app/api/utils/auth";
 import { TicketType } from "@/app/ticket-types";
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { NextRequest } from "next/server";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 export async function POST(request: NextRequest) {
   if (!canUserAccess(request, ProtectedResource.TICKET_DASHBOARD)) {
@@ -15,7 +17,7 @@ export async function POST(request: NextRequest) {
     }
     let q =
       await sql`UPDATE attendees SET type = ${type} WHERE id = ${id} AND type NOT IN ('speaker') AND paid = false RETURNING *`;
-    if (q.rowCount === 0) {
+    if (q.length === 0) {
       return Response.json({ message: "Invalid request" }, { status: 400 });
     }
     return Response.json({ message: "Success" });

@@ -1,12 +1,13 @@
 import { Applicant } from "@/app/admin/types/Applicant";
 import { EARLY_BIRD_UNTIL } from "@/app/metadata";
-import { sql, VercelPoolClient } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { TicketType } from "../../../ticket-types";
 import { price } from "../../tickets/prices";
 import { ResponseCode } from "../../utils/response-codes";
 import { scheduleBackgroundEmails } from "./eTicketEmail";
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 // ============================================================================
 // Constants
@@ -84,10 +85,7 @@ function formatPaymentSourceForStorage(source: PaymentSource): string {
  * Batch-generates unique UUIDs, checking against existing ones in DB.
  * Much faster than generating one at a time.
  */
-export async function generateBatchUUIDs(
-  client: VercelPoolClient,
-  count: number,
-): Promise<string[]> {
+export async function generateBatchUUIDs(count: number): Promise<string[]> {
   if (count === 0) return [];
 
   const uuids: string[] = [];
@@ -102,12 +100,12 @@ export async function generateBatchUUIDs(
 
     // Check which UUIDs already exist (should be extremely rare)
     // Cast both sides to text to avoid type mismatch issues
-    const existing = await client.query(
+    const existing = await sql.query(
       `SELECT uuid FROM attendees WHERE uuid::text = ANY($1::text[])`,
       [candidates],
     );
 
-    const existingSet = new Set(existing.rows.map((r) => r.uuid));
+    const existingSet = new Set(existing.map((r) => r.uuid));
     const valid = candidates.filter((u) => !existingSet.has(u));
     uuids.push(...valid);
   }
@@ -123,7 +121,6 @@ export async function generateBatchUUIDs(
  * For CASH payments, we additionally filter by email since CASH doesn't have a unique identifier.
  */
 async function fetchUnpaidAttendees(
-  client: VercelPoolClient,
   fullPaymentMethod: string,
   method: string,
   identifier: string | null,
@@ -133,7 +130,7 @@ async function fetchUnpaidAttendees(
 
   if (method === "CASH" && identifier) {
     // CASH payments filter by method AND email
-    query = await client.query(
+    query = await sql.query(
       `SELECT * FROM attendees 
        WHERE payment_method = $1 AND paid = false AND email = $2
        FOR UPDATE`,
@@ -141,7 +138,7 @@ async function fetchUnpaidAttendees(
     );
   } else {
     // Other payments query by full payment_method (e.g., "TLDA@username")
-    query = await client.query(
+    query = await sql.query(
       `SELECT * FROM attendees 
        WHERE payment_method = $1 AND paid = false
        FOR UPDATE`,
@@ -149,10 +146,18 @@ async function fetchUnpaidAttendees(
     );
   }
 
-  return query.rows
+  return query
     .filter((row) => row.paid === false && row.type !== TicketType.DISCOUNTED)
     .map((row) => ({
       ...row,
+      id: row.id,
+      full_name: row.full_name,
+      email: row.email,
+      phone: row.phone,
+      type: row.type,
+      payment_method: row.payment_method,
+      paid: row.paid,
+      uuid: row.uuid,
       price: price.getPrice(row.type, paymentDate, row.payment_method),
     }));
 }
@@ -163,7 +168,6 @@ async function fetchUnpaidAttendees(
  * CASH can't reach this stage.
  */
 async function fetchUnpaidByIds(
-  client: VercelPoolClient,
   ids: number[],
   fullPaymentMethod: string,
   paymentDate: Date,
@@ -173,17 +177,24 @@ async function fetchUnpaidByIds(
     fullPaymentMethod = "CASH";
   }
 
-  const query = await client.query(
+  const query = await sql.query(
     `SELECT * FROM attendees 
      WHERE id = ANY($1::int[]) AND payment_method = $2 AND paid = false
      FOR UPDATE`,
     [ids, fullPaymentMethod],
   );
 
-  return query.rows
+  return query
     .filter((row) => row.paid === false)
     .map((row) => ({
-      ...row,
+      id: row.id,
+      full_name: row.full_name,
+      email: row.email,
+      phone: row.phone,
+      type: row.type,
+      payment_method: row.payment_method,
+      paid: row.paid,
+      uuid: row.uuid,
       price: price.getPrice(row.type, paymentDate, row.payment_method),
     }));
 }
@@ -193,12 +204,11 @@ async function fetchUnpaidByIds(
  * Returns a map of attendee ID -> group info.
  */
 async function fetchGroupsForAttendees(
-  client: VercelPoolClient,
   attendeeIds: number[],
 ): Promise<Map<number, GroupInfo>> {
   if (attendeeIds.length === 0) return new Map();
 
-  const query = await client.query(
+  const query = await sql.query(
     `SELECT grpid, id1, id2, id3, id4 FROM groups 
      WHERE id1 = ANY($1::int[]) OR id2 = ANY($1::int[]) 
         OR id3 = ANY($1::int[]) OR id4 = ANY($1::int[])`,
@@ -207,7 +217,7 @@ async function fetchGroupsForAttendees(
 
   const groupMap = new Map<number, GroupInfo>();
 
-  for (const row of query.rows) {
+  for (const row of query) {
     const memberIds = [row.id1, row.id2, row.id3, row.id4];
     const groupInfo: GroupInfo = { grpid: row.grpid, memberIds };
 
@@ -223,7 +233,6 @@ async function fetchGroupsForAttendees(
  * Expands attendee list to include all group members for GROUP tickets.
  */
 async function expandGroupMembers(
-  client: VercelPoolClient,
   attendees: UnpaidAttendee[],
   fullPaymentMethod: string,
   paymentDate: Date,
@@ -234,7 +243,7 @@ async function expandGroupMembers(
 
   if (groupAttendeeIds.length === 0) return attendees;
 
-  const groupMap = await fetchGroupsForAttendees(client, groupAttendeeIds);
+  const groupMap = await fetchGroupsForAttendees(groupAttendeeIds);
 
   // Collect all member IDs we need to fetch
   const allMemberIds = new Set<number>();
@@ -253,7 +262,6 @@ async function expandGroupMembers(
   if (missingIds.length === 0) return attendees;
 
   const additionalMembers = await fetchUnpaidByIds(
-    client,
     missingIds,
     fullPaymentMethod,
     paymentDate,
@@ -303,7 +311,6 @@ function analyzeUnpaidAttendees(attendees: UnpaidAttendee[]): {
  * Returns ambiguity data for 431 response if needed.
  */
 async function checkForAmbiguity(
-  client: VercelPoolClient,
   unpaid: UnpaidAttendee[],
   amount: number,
   total: number,
@@ -329,7 +336,7 @@ async function checkForAmbiguity(
       .filter((a) => a.type === TicketType.GROUP)
       .map((a) => a.id);
 
-    const groupMap = await fetchGroupsForAttendees(client, groupAttendeeIds);
+    const groupMap = await fetchGroupsForAttendees(groupAttendeeIds);
 
     for (const attendee of unpaid) {
       if (
@@ -354,7 +361,6 @@ async function checkForAmbiguity(
 
         // Fetch other group members for the groupMembers map
         const otherMembers = await fetchUnpaidByIds(
-          client,
           otherMemberIds,
           fullPaymentMethod,
           paymentDate,
@@ -375,13 +381,12 @@ async function checkForAmbiguity(
  * Collects unique groups from attendees and returns grouped data.
  */
 async function collectUniqueGroups(
-  client: VercelPoolClient,
   groupAttendees: UnpaidAttendee[],
 ): Promise<Map<number, number[]>> {
   if (groupAttendees.length === 0) return new Map();
 
   const attendeeIds = groupAttendees.map((a) => a.id);
-  const groupMap = await fetchGroupsForAttendees(client, attendeeIds);
+  const groupMap = await fetchGroupsForAttendees(attendeeIds);
 
   // Deduplicate by grpid
   const uniqueGroups = new Map<number, number[]>();
@@ -399,7 +404,6 @@ async function collectUniqueGroups(
  * Uses bulk operations for efficiency.
  */
 async function processPayments(
-  client: VercelPoolClient,
   unpaid: UnpaidAttendee[],
   amount: number,
   paymentDate: Date,
@@ -427,7 +431,7 @@ async function processPayments(
   }
 
   // Process groups
-  const uniqueGroups = await collectUniqueGroups(client, groupAttendees);
+  const uniqueGroups = await collectUniqueGroups(groupAttendees);
 
   for (const [, memberIds] of uniqueGroups) {
     if (paidAmount + groupPrice <= amount) {
@@ -450,7 +454,7 @@ async function processPayments(
   }
 
   // Generate UUIDs in batch
-  const uuids = await generateBatchUUIDs(client, attendeesToUpdate.length);
+  const uuids = await generateBatchUUIDs(attendeesToUpdate.length);
   for (let i = 0; i < attendeesToUpdate.length; i++) {
     attendeesToUpdate[i].uuid = uuids[i];
   }
@@ -460,7 +464,7 @@ async function processPayments(
   const uuidList = attendeesToUpdate.map((a) => a.uuid);
   const types = attendeesToUpdate.map((a) => a.type);
 
-  await client.query(
+  await sql.query(
     `UPDATE attendees
      SET paid = true, 
          uuid = data.uuid::uuid,
@@ -534,13 +538,11 @@ export async function pay(
     );
   }
 
-  const client = await sql.connect();
-
   try {
     // Handle refunds (negative amounts)
     if (amountNum < 0) {
       const streamName = formatPaymentSourceForStorage(paymentSource);
-      await client.sql`
+      await sql`
         INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) 
         VALUES (${streamName}, 0, ${amount}, ${date})
       `;
@@ -551,11 +553,10 @@ export async function pay(
     }
 
     // Start transaction for payment processing
-    await client.query("BEGIN");
+    await sql.query("BEGIN");
 
     // Fetch unpaid attendees
     let unpaid = await fetchUnpaidAttendees(
-      client,
       from, // Full payment method string (e.g., "TLDA@username")
       paymentSource.method,
       paymentSource.identifier,
@@ -563,7 +564,7 @@ export async function pay(
     );
 
     if (unpaid.length === 0) {
-      await client.query("ROLLBACK");
+      await sql.query("ROLLBACK");
       return NextResponse.json(
         {
           message:
@@ -581,12 +582,12 @@ export async function pay(
       let filtered = unpaid.filter((a) => requestedIds.includes(a.id));
 
       // Expand groups for requested IDs
-      filtered = await expandGroupMembers(client, filtered, from, paymentDate);
+      filtered = await expandGroupMembers(filtered, from, paymentDate);
 
       unpaid = filtered;
 
       if (unpaid.length === 0) {
-        await client.query("ROLLBACK");
+        await sql.query("ROLLBACK");
         return NextResponse.json(
           { message: "Nobody to pay for." },
           { status: 400 },
@@ -594,7 +595,7 @@ export async function pay(
       }
     } else {
       // Expand to include all group members if dealing with groups
-      unpaid = await expandGroupMembers(client, unpaid, from, paymentDate);
+      unpaid = await expandGroupMembers(unpaid, from, paymentDate);
     }
 
     // Analyze what we have
@@ -603,7 +604,6 @@ export async function pay(
     // Check for ambiguity (partial payment that could apply to multiple tickets)
     if (id_if_needed === "") {
       const ambiguity = await checkForAmbiguity(
-        client,
         unpaid,
         amountNum,
         analysis.total,
@@ -614,7 +614,7 @@ export async function pay(
       );
 
       if (ambiguity) {
-        await client.query("ROLLBACK");
+        await sql.query("ROLLBACK");
         return NextResponse.json(
           {
             message:
@@ -629,10 +629,7 @@ export async function pay(
 
     // Check for group-only ambiguity (multiple groups, can't pay for all)
     if (analysis.containsGroup && !analysis.containsIndividual) {
-      const uniqueGroups = await collectUniqueGroups(
-        client,
-        analysis.groupAttendees,
-      );
+      const uniqueGroups = await collectUniqueGroups(analysis.groupAttendees);
       const groupPrice =
         price.getPrice(TicketType.GROUP, paymentDate) * GROUP_SIZE;
 
@@ -655,7 +652,7 @@ export async function pay(
           }
         }
 
-        await client.query("ROLLBACK");
+        await sql.query("ROLLBACK");
         return NextResponse.json(
           {
             message:
@@ -670,14 +667,13 @@ export async function pay(
 
     // Process payments
     const { paidAmount, paidAttendees } = await processPayments(
-      client,
       unpaid,
       amountNum,
       paymentDate,
     );
 
     if (paidAmount === 0) {
-      await client.query("ROLLBACK");
+      await sql.query("ROLLBACK");
       return NextResponse.json(
         {
           message: `Nothing was paid. To pay for all tickets: ${analysis.total} EGP. Paying for only one ticket (or an entire group ticket) is accepted as well.`,
@@ -689,14 +685,14 @@ export async function pay(
     // Log to pay_backup BEFORE sending emails (ensures payment is recorded)
     const streamName = formatPaymentSourceForStorage(paymentSource);
     if (amountNum !== 0) {
-      await client.sql`
+      await sql`
         INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) 
         VALUES (${streamName}, ${paidAmount}, ${amount}, ${date})
       `;
     }
 
     // Commit transaction - payment is now final
-    await client.query("COMMIT");
+    await sql.query("COMMIT");
 
     // Send emails (after commit, so payment is safe even if emails fail)
     sendEmails(paidAttendees);
@@ -710,7 +706,7 @@ export async function pay(
       { status: 200 },
     );
   } catch (e) {
-    await client.query("ROLLBACK").catch(() => {});
+    await sql.query("ROLLBACK").catch(() => {});
     console.error("Payment processing error:", e);
     return NextResponse.json(
       {
@@ -718,8 +714,6 @@ export async function pay(
       },
       { status: 500 },
     );
-  } finally {
-    client.release();
   }
 }
 
@@ -730,7 +724,7 @@ export async function pay(
 export async function safeRandUUID(): Promise<string> {
   let uuid = randomUUID();
   let query = await sql`SELECT * FROM attendees WHERE uuid = ${uuid}`;
-  while (query.rows.length !== 0) {
+  while (query.length !== 0) {
     uuid = randomUUID();
     query = await sql`SELECT * FROM attendees WHERE uuid = ${uuid}`;
   }

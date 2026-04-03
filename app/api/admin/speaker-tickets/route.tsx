@@ -5,7 +5,7 @@ import {
   SPEAKER_FREE_TICKETS,
   YEAR,
 } from "@/app/metadata";
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { promises } from "fs";
 import { type NextRequest } from "next/server";
 import nodemailer from "nodemailer";
@@ -15,6 +15,8 @@ import { TicketType } from "../../../ticket-types";
 import { canUserAccess, ProtectedResource } from "../../utils/auth";
 import { validateCsrf } from "../../utils/csrf";
 import { safeRandUUID } from "../payment-reciever/main";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 export async function GET(request: NextRequest) {
   // This GET endpoint creates tickets, so it needs CSRF protection
@@ -31,7 +33,7 @@ export async function GET(request: NextRequest) {
   if (speakerEmail === null) {
     return Response.json(
       { message: "Speaker's Email is required." },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -39,7 +41,7 @@ export async function GET(request: NextRequest) {
   if (speakerName === null) {
     return Response.json(
       { message: "Speaker's Name is required." },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -62,20 +64,20 @@ export async function GET(request: NextRequest) {
           i + 1
         }', 'CASH', '200000000000', '${
           TicketType.SPEAKER
-        }', true, true, '${uuid}')`
+        }', true, true, '${uuid}')`,
       );
     }
 
     let q = await sql.query(
       `INSERT INTO attendees (email, full_name, payment_method, phone, type, paid, sent, uuid) VALUES ${values.join(
-        ", "
-      )} RETURNING *`
+        ", ",
+      )} RETURNING *`,
     );
 
-    if (q.rowCount !== number) {
+    if (q.length !== number) {
       return Response.json(
         { message: "Error occurred while adding tickets." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -99,7 +101,7 @@ export async function GET(request: NextRequest) {
         speakerEmail,
         uuids[i],
         `${speakerName}'s Invitation ${i + 1}`,
-        speakerName
+        speakerName,
       );
     }
 
@@ -107,7 +109,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return Response.json(
       { message: "Error occurred. " + error },
-      { status: 400 }
+      { status: 400 },
     );
   }
 }
@@ -124,7 +126,7 @@ async function sendSpeakerTicket(
   speakerEmail: string,
   uuid: string,
   ticketName: string,
-  speakerName: string
+  speakerName: string,
 ) {
   const filePath = path.join(process.cwd(), "public/speaker-eticket.html");
   const htmlContent = await promises.readFile(filePath, "utf8");

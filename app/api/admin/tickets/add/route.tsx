@@ -1,4 +1,4 @@
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { PaymentMethodKey } from "../../../../payment-methods";
 import { TicketType } from "../../../../ticket-types";
@@ -14,6 +14,8 @@ import { generateBatchUUIDs, safeRandUUID } from "../../payment-reciever/main";
 
 // Constants
 const GROUP_SIZE = 4;
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 export async function POST(req: NextRequest) {
   // 1. Auth Check
@@ -113,24 +115,23 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Database Insertion
-    const client = await sql.connect();
 
     try {
-      await client.query("BEGIN");
+      await sql.query("BEGIN");
 
       const insertedIds: number[] = [];
       const recipients = [];
 
       let uuids: string[] = [];
       if (isPaid) {
-        uuids = await generateBatchUUIDs(client, attendees.length);
+        uuids = await generateBatchUUIDs(attendees.length);
       }
 
       for (const attendee of attendees) {
         const { name, email, phone } = attendee;
         let uuid = uuids.shift()!;
 
-        const res = await client.query(
+        const res = await sql.query(
           `INSERT INTO attendees (email, full_name, phone, type, payment_method, paid, uuid, sent)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                  RETURNING id`,
@@ -146,7 +147,7 @@ export async function POST(req: NextRequest) {
           ], // sent defaults to false, logic below handles sending
         );
 
-        const newId = res.rows[0].id;
+        const newId = res[0].id;
         insertedIds.push(newId);
 
         if (isPaid && uuid != null) {
@@ -161,7 +162,7 @@ export async function POST(req: NextRequest) {
 
       // Handle Group Linking
       if (isGroup) {
-        await client.query(
+        await sql.query(
           `INSERT INTO groups (id1, id2, id3, id4) VALUES ($1, $2, $3, $4)`,
           [insertedIds[0], insertedIds[1], insertedIds[2], insertedIds[3]],
         );
@@ -177,14 +178,14 @@ export async function POST(req: NextRequest) {
           ? `${paymentMethod}@${paymentIdentifier.replaceAll("@", " ")}`
           : paymentMethod;
 
-        await client.query(
+        await sql.query(
           `INSERT INTO pay_backup (stream, incurred, recieved, recieved_at)
                  VALUES ($1, $2, $3, NOW())`,
           [streamName, totalAmount, totalAmount], // Assuming full payment received
         );
       }
 
-      await client.query("COMMIT");
+      await sql.query("COMMIT");
 
       // 5. Send Emails (Background)
       if (isPaid && recipients.length > 0) {
@@ -197,14 +198,12 @@ export async function POST(req: NextRequest) {
         ids: insertedIds,
       });
     } catch (e) {
-      await client.query("ROLLBACK");
+      await sql.query("ROLLBACK");
       console.error("Error creating tickets:", e);
       return NextResponse.json(
         { message: "Database error occurred." },
         { status: 500 },
       );
-    } finally {
-      client.release();
     }
   } catch (error) {
     console.error("API Error:", error);

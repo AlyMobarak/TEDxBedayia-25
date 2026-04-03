@@ -1,7 +1,9 @@
 import { price } from "@/app/api/tickets/prices";
 import { canUserAccess, ProtectedResource } from "@/app/api/utils/auth";
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 export async function GET(request: NextRequest) {
   if (!canUserAccess(request, ProtectedResource.MARKETING_DASHBOARD)) {
@@ -9,7 +11,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    let { rows } =
+    let rows =
       await sql`SELECT * FROM rush_hour WHERE processed = FALSE ORDER BY created_at DESC`;
 
     if (rows.length === 0) {
@@ -26,18 +28,16 @@ export async function GET(request: NextRequest) {
       .filter((x) => x != null)
       .join(",");
 
-    let attendees = [];
+    let attendees: any[] = [];
     if (idsOrNull !== "") {
-      attendees = (
-        await sql.query(
-          `SELECT id, type FROM attendees WHERE id IN (${idsOrNull})`
-        )
-      ).rows;
+      attendees = await sql.query(
+        `SELECT id, type FROM attendees WHERE id IN (${idsOrNull})`,
+      );
     }
 
     rows = rows.map((row) => {
       const attendee = attendees.find(
-        (attendee) => attendee.id === row.attendeeId
+        (attendee) => attendee.id === row.attendeeId,
       );
       return {
         ...row,

@@ -1,8 +1,10 @@
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { type NextRequest } from "next/server";
 import { TicketType } from "../../../ticket-types";
 import { price } from "../../tickets/prices";
 import { canUserAccess, ProtectedResource } from "../../utils/auth";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 export async function GET(request: NextRequest) {
   if (!canUserAccess(request, ProtectedResource.PAYMENT_LOGS)) {
@@ -28,10 +30,8 @@ export async function GET(request: NextRequest) {
 
     return Response.json({
       total:
-        parseInt(
-          query.rows[0].total_price != undefined ? query.rows[0].total_price : 0
-        ) +
-        parseInt(totalDiscountedCodes.rows[0].count) * price.discounted,
+        parseInt(query[0].total_price != undefined ? query[0].total_price : 0) +
+        parseInt(totalDiscountedCodes[0].count) * price.discounted,
     });
   } catch (error) {
     return Response.json({ message: "Error occurred." }, { status: 400 });

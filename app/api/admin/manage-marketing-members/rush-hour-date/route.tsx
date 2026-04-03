@@ -1,7 +1,9 @@
 import { canUserAccess, ProtectedResource } from "@/app/api/utils/auth";
 import { SQLSettings } from "@/app/api/utils/sql-settings";
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 export async function GET(request: NextRequest) {
   if (!canUserAccess(request, ProtectedResource.MARKETING_DASHBOARD)) {
@@ -11,19 +13,19 @@ export async function GET(request: NextRequest) {
   try {
     const result =
       await sql`SELECT value FROM settings WHERE key = ${SQLSettings.RUSH_HOUR_DATE};`;
-    if (result.rows.length === 0) {
+    if (result.length === 0) {
       return NextResponse.json({ rushHourDate: null }, { status: 200 });
     }
-    const rushHourDate = result.rows[0].value;
+    const rushHourDate = result[0].value;
     return NextResponse.json(
       { date: new Date(rushHourDate).toISOString() },
-      { status: 200 }
+      { status: 200 },
     );
   } catch (error) {
     console.error("Error fetching rush hour date:", error);
     return NextResponse.json(
       { message: "Error fetching rush hour date." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -39,14 +41,14 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return NextResponse.json(
       { message: "Please provide a valid JSON body." },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
   if (!body.date) {
     return NextResponse.json(
       { message: "Please provide a valid date." },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -60,12 +62,12 @@ export async function POST(request: NextRequest) {
     console.error("Error updating rush hour date:", error);
     return NextResponse.json(
       { message: "Error updating rush hour date." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 
   return NextResponse.json(
     { message: "Rush hour date updated successfully.", date },
-    { status: 200 }
+    { status: 200 },
   );
 }

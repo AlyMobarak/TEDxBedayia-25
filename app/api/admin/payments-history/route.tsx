@@ -1,8 +1,10 @@
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { type NextRequest } from "next/server";
 import { getPaymentMethods } from "../../../payment-methods";
 import { canUserAccess, ProtectedResource } from "../../utils/auth";
 import { validateCsrf } from "../../utils/csrf";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 export async function GET(request: NextRequest) {
   const csrfError = validateCsrf(request);
@@ -34,7 +36,7 @@ export async function GET(request: NextRequest) {
   };
 
   return Response.json(
-    query.rows.map((row) => {
+    query.map((row) => {
       const [identifier, rest] = row.stream.toString().split("@");
       const details = rest?.replaceAll(" ", "@") ?? "";
       return {
@@ -43,6 +45,6 @@ export async function GET(request: NextRequest) {
         recieved: row.recieved,
         created_at: row.created_at,
       };
-    })
+    }),
   );
 }

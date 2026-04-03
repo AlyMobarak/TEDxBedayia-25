@@ -1,6 +1,6 @@
 import { EVENT_DATE, INDIVIDUAL_TICKET_PRICE } from "@/app/metadata";
 import { PaymentMethodKey, paymentOptions } from "@/app/payment-methods";
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { safeRandUUID } from "../../admin/payment-reciever/main";
 import {
@@ -8,6 +8,8 @@ import {
   checkSafety,
   verifyEmail,
 } from "../../utils/input-sanitization";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 // CORS headers for Usher App access
 function corsHeaders(): Headers {
@@ -120,43 +122,34 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Use postgres client with transaction for atomicity
-  const client = await sql.connect();
-
   try {
-    await client.query("BEGIN");
+    await sql.query("BEGIN");
 
     // Generate a unique UUID
     const uuid = await safeRandUUID();
 
     // Insert new attendee as paid & admitted on-door
-    const result = await client.query(
-      `INSERT INTO attendees (email, full_name, phone, type, payment_method, paid, uuid, sent, admitted_at, admitted_by)
-       VALUES ($1, $2, $3, 'individual', $4, TRUE, $5, TRUE, NOW(), $6)
-       RETURNING *`,
-      [email, name, phone, paymentMethod, uuid, device],
-    );
+    const result = await sql`
+      INSERT INTO attendees (email, full_name, phone, type, payment_method, paid, uuid, sent, admitted_at, admitted_by)
+       VALUES (${email}, ${name}, ${phone}, 'individual', ${paymentMethod}, TRUE, ${uuid}, TRUE, NOW(), ${device})
+       RETURNING *`;
 
-    await client.query(
-      `INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) VALUES ($1, $2, $2, NOW())`,
-      [paymentMethod, INDIVIDUAL_TICKET_PRICE],
-    );
+    await sql`
+      INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) VALUES (${paymentMethod}, ${INDIVIDUAL_TICKET_PRICE}, ${INDIVIDUAL_TICKET_PRICE}, NOW())`;
 
-    await client.query("COMMIT");
+    await sql.query("COMMIT");
 
     return NextResponse.json(
-      { success: true, applicant: result.rows[0] },
+      { success: true, applicant: result[0] },
       { status: 200, headers },
     );
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    await sql.query("ROLLBACK").catch(() => {});
     console.error("On-door ticket error:", error);
     return NextResponse.json(
       { error: "An Error Occurred." },
       { status: 502, headers },
     );
-  } finally {
-    client.release();
   }
 }
 

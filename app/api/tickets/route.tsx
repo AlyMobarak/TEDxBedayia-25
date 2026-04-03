@@ -1,5 +1,5 @@
 import { TICKET_WINDOW } from "@/app/metadata";
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { type NextRequest } from "next/server";
 import { TicketType } from "../../ticket-types";
 import { sendBatchEmail } from "../admin/payment-reciever/eTicketEmail";
@@ -15,6 +15,8 @@ import {
   verifyPaymentMethod,
 } from "../utils/input-sanitization";
 import { price } from "./prices";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 // email, name, phone, paymentMethod
 export async function POST(request: NextRequest) {
@@ -137,7 +139,7 @@ async function submitOneTicket(
         code ? TicketType.DISCOUNTED : TicketType.INDIVIDUAL,
       ],
     );
-    id = res.rows[0].id;
+    id = res[0].id;
   } catch (error) {
     return Response.json(
       {
@@ -151,7 +153,7 @@ async function submitOneTicket(
     let result =
       await sql`UPDATE rush_hour SET code = NULL, attendee_id = ${id} WHERE code = ${code} RETURNING processed;`;
 
-    if (result.rowCount === 0) {
+    if (result.length === 0) {
       // invalid code.. delete the attendee record since the code is invalid.
       await sql`DELETE FROM attendees WHERE id = ${id}`;
       await sql`SELECT setval('attendees_id_seq', (SELECT MAX(id) FROM attendees));`;
@@ -161,7 +163,7 @@ async function submitOneTicket(
       );
     }
 
-    if (result.rows[0].processed === true) {
+    if (result[0].processed === true) {
       let uuid = await safeRandUUID();
       await sql`UPDATE attendees SET paid = TRUE, uuid = ${uuid} WHERE id = ${id} AND paid = FALSE RETURNING *`;
       await sendBatchEmail([{ email, fullName: name, uuid, id }]);
@@ -169,7 +171,7 @@ async function submitOneTicket(
 
     return Response.json(
       {
-        message: result.rows[0].processed
+        message: result[0].processed
           ? `The ticket was sent to your email! Congratulations for your Rush Hour Ticket!`
           : `Our team is reviewing rush hour payments at this moment. Your ticket will be sent to your email once the payment is confirmed.`,
         success: true,
@@ -263,15 +265,10 @@ export async function GET() {
 
   return Response.json(
     {
-      total:
-        parseInt(query.rows[0].count) +
-        parseInt(totalDiscountedCodes.rows[0].count),
-      paid:
-        parseInt(query2.rows[0].count) +
-        parseInt(totalDiscountedCodes.rows[0].count),
+      total: parseInt(query[0].count) + parseInt(totalDiscountedCodes[0].count),
+      paid: parseInt(query2[0].count) + parseInt(totalDiscountedCodes[0].count),
       actual:
-        parseInt(query3.rows[0].count) +
-        parseInt(totalDiscountedCodes.rows[0].count),
+        parseInt(query3[0].count) + parseInt(totalDiscountedCodes[0].count),
     },
     { status: 200 },
   );

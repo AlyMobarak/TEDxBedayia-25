@@ -1,7 +1,9 @@
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { scheduleBackgroundEmails } from "../admin/payment-reciever/eTicketEmail";
 import { safeRandUUID } from "../admin/payment-reciever/main";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 type Primitive = string | number | boolean | null | undefined;
 
@@ -10,7 +12,7 @@ type Primitive = string | number | boolean | null | undefined;
  */
 function getNestedValue<T extends Record<string, any>>(
   obj: T,
-  path: string
+  path: string,
 ): Primitive {
   return path
     .split(".")
@@ -23,7 +25,7 @@ function getNestedValue<T extends Record<string, any>>(
  */
 function stringifyValues<T extends Record<string, any>>(
   obj: T,
-  keys: string[]
+  keys: string[],
 ): string {
   return [...keys]
     .sort() // sort lexicographically
@@ -35,7 +37,6 @@ function stringifyValues<T extends Record<string, any>>(
 }
 
 export async function POST(request: NextRequest) {
-  const client = await sql.connect();
   try {
     // ensure the request is coming from Paymob by HMAC authentication
     const fields = [
@@ -82,13 +83,13 @@ export async function POST(request: NextRequest) {
       keyData,
       { name: "HMAC", hash: "SHA-512" },
       false,
-      ["sign"]
+      ["sign"],
     );
 
     const signature = await crypto.subtle.sign(
       "HMAC",
       hmacKey,
-      encoder.encode(hmacString)
+      encoder.encode(hmacString),
     );
 
     const computedHmac = Array.from(new Uint8Array(signature))
@@ -113,19 +114,18 @@ export async function POST(request: NextRequest) {
       // update the payment status in the database using the orderId & check if user already paid then don't do anything
       let members;
       try {
-        members = await client.sql`
+        members = await sql`
           SELECT * FROM attendees WHERE payment_method = ${
             "CARD@" + orderId
           } AND paid = FALSE;
         `;
       } catch (error) {
         console.error("Database query error:", error);
-        client.release();
         return new Response("Database Error", { status: 500 });
       }
 
-      if ((members.rowCount || 0) > 0) {
-        const ids = members.rows.map((row: any) => parseInt(row.id));
+      if ((members.length || 0) > 0) {
+        const ids = members.map((row: any) => parseInt(row.id));
         // const arrayLiteral = `{${ids.join(",")}}`;
 
         const uuids: string[] = [];
@@ -133,24 +133,24 @@ export async function POST(request: NextRequest) {
           uuids.push(await safeRandUUID());
         }
 
-        const result = await client.query(
+        const result = await sql.query(
           `UPDATE attendees SET paid = true, uuid = data.uuid FROM ( SELECT unnest($1::int[]) AS id, unnest($2::uuid[]) AS uuid ) AS data WHERE attendees.id = data.id RETURNING *;`,
-          [ids, uuids] // Parameters passed as arrays
+          [ids, uuids], // Parameters passed as arrays
         );
-        const updated = result.rowCount === ids.length;
+        const updated = result.length === ids.length;
 
         if (updated) {
           // Schedule emails to be sent in background (non-blocking)
           scheduleBackgroundEmails(
-            result.rows.map((row) => ({
+            result.map((row) => ({
               email: row.email,
               fullName: row.full_name,
               uuid: row.uuid,
               id: String(row.id),
-            }))
+            })),
           );
 
-          await client.sql`INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) VALUES (${
+          await sql`INSERT INTO pay_backup (stream, incurred, recieved, recieved_at) VALUES (${
             "CARD@" + orderId
           }, ${transaction.amount_cents / 100}, ${
             transaction.amount_cents / 100
@@ -165,11 +165,9 @@ export async function POST(request: NextRequest) {
       // no marking needed if payment declined
     }
 
-    client.release();
     return new Response("OK", { status: 200 });
   } catch (error) {
     console.error("Error processing payment callback:", error);
-    client.release();
     return new Response("Internal Server Error", { status: 500 });
   }
 }

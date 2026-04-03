@@ -1,6 +1,8 @@
 import { canUserAccess, ProtectedResource } from "@/app/api/utils/auth";
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 // Handler for GET requests
 export async function GET(
@@ -9,7 +11,7 @@ export async function GET(
     params,
   }: {
     params: Promise<{ index: string }>;
-  }
+  },
 ) {
   const index = parseInt((await params).index, 10) - 1; // Extract and parse the 'index' parameter
   const itemsPerPage = 10; // Number of rows per request
@@ -22,7 +24,7 @@ export async function GET(
   if (isNaN(index) || index < 0) {
     return NextResponse.json(
       { error: "Invalid index parameter" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -31,13 +33,13 @@ export async function GET(
   // Checks
   if (
     !["true", "false"].includes(
-      request.nextUrl.searchParams.get("sent") ?? "true"
+      request.nextUrl.searchParams.get("sent") ?? "true",
     ) ||
     !["true", "false"].includes(
-      request.nextUrl.searchParams.get("paid") ?? "true"
+      request.nextUrl.searchParams.get("paid") ?? "true",
     ) ||
     !["true", "false"].includes(
-      request.nextUrl.searchParams.get("admitted") ?? "true"
+      request.nextUrl.searchParams.get("admitted") ?? "true",
     )
   ) {
     return NextResponse.json({ error: "Invalid Parameter" }, { status: 400 });
@@ -90,21 +92,21 @@ export async function GET(
          request.nextUrl.searchParams.get("asc") == "true" ? "ASC" : "DESC"
        }
        LIMIT $1 OFFSET $2`,
-      [itemsPerPage, index * itemsPerPage]
+      [itemsPerPage, index * itemsPerPage],
     );
 
     // If no rows are returned, return an empty array
-    if (result.rows.length === 0) {
+    if (result.length === 0) {
       return NextResponse.json([], { status: 200 });
     }
 
     // Return the paginated applicants as JSON
-    return NextResponse.json(result.rows, { status: 200 });
+    return NextResponse.json(result, { status: 200 });
   } catch (error) {
     console.error("Error fetching applicants:", error);
     return NextResponse.json(
       { error: "Database query failed" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

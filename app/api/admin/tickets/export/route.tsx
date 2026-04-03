@@ -1,6 +1,8 @@
 import { canUserAccess, ProtectedResource } from "@/app/api/utils/auth";
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 // Handler for GET requests - exports ALL tickets
 export async function GET(request: NextRequest) {
@@ -18,12 +20,12 @@ export async function GET(request: NextRequest) {
     `;
 
     // Return all attendees as JSON
-    return NextResponse.json(result.rows, { status: 200 });
+    return NextResponse.json(result, { status: 200 });
   } catch (error) {
     console.error("Error fetching attendees for export:", error);
     return NextResponse.json(
       { error: "Database query failed" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

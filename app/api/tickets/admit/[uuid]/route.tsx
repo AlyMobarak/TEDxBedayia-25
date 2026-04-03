@@ -1,6 +1,8 @@
 import { EVENT_DATE } from "@/app/metadata";
-import { sql } from "@vercel/postgres";
+import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
+
+const sql = neon(`${process.env.DATABASE_URL}`);
 
 // Handler for GET requests
 export async function GET(
@@ -57,34 +59,27 @@ export async function GET(
   // Check if this is a full UUID (36 chars with dashes) or partial
   const isFullUUID = uuid.length === 36;
 
-  // Use postgres client with transaction and row-level locking
-  const client = await sql.connect();
-
   try {
     // Start transaction
-    await client.query("BEGIN");
+    await sql.query("BEGIN");
 
     // Lock matching row(s) to prevent concurrent admission attempts
     // Use exact match for full UUID, prefix match for partial
     let lockResult;
     if (isFullUUID) {
-      lockResult = await client.query(
-        `SELECT * FROM attendees WHERE uuid = $1 FOR UPDATE LIMIT 2`,
-        [uuid],
-      );
+      lockResult = await sql`
+        SELECT * FROM attendees WHERE uuid = ${uuid} FOR UPDATE LIMIT 2`;
     } else {
       // Partial UUID: match prefix safely using LEFT(...) and limit locked rows
-      lockResult = await client.query(
-        `SELECT * FROM attendees
-           WHERE LEFT(uuid::text, $2) = $1
+      lockResult = await sql`
+        SELECT * FROM attendees
+           WHERE LEFT(uuid::text, ${uuid.length}) = ${uuid}
            FOR UPDATE
-           LIMIT 2`,
-        [uuid, uuid.length],
-      );
+           LIMIT 2`;
     }
 
-    if (lockResult.rowCount === 0) {
-      await client.query("ROLLBACK");
+    if (lockResult.length === 0) {
+      await sql.query("ROLLBACK");
       return NextResponse.json(
         { error: "Applicant not found." },
         { status: 404, headers: headers },
@@ -92,19 +87,19 @@ export async function GET(
     }
 
     // Check for multiple matches (only possible with partial UUID)
-    if (lockResult.rowCount && lockResult.rowCount > 1) {
-      await client.query("ROLLBACK");
+    if (lockResult.length && lockResult.length > 1) {
+      await sql.query("ROLLBACK");
       return NextResponse.json(
         { error: "Multiple tickets found, please insert the full UUID." },
         { status: 400, headers: headers },
       );
     }
 
-    const attendee = lockResult.rows[0];
+    const attendee = lockResult[0];
 
     // Check if attendee has paid
     if (!attendee.paid) {
-      await client.query("ROLLBACK");
+      await sql.query("ROLLBACK");
       return NextResponse.json(
         { error: "Applicant has not even paid." },
         { status: 400, headers: headers },
@@ -119,13 +114,13 @@ export async function GET(
         Date.now() - admittedTime < 2.5 * 1000 &&
         attendee.admitted_by === deviceUID
       ) {
-        await client.query("COMMIT");
+        await sql.query("COMMIT");
         return NextResponse.json(
           { success: true, applicant: attendee },
           { status: 200, headers: headers },
         );
       }
-      await client.query("ROLLBACK");
+      await sql.query("ROLLBACK");
       return NextResponse.json(
         { error: "Applicant already admitted." },
         { status: 400, headers: headers },
@@ -133,39 +128,35 @@ export async function GET(
     }
 
     // Admit the attendee (use attendee.uuid from locked row for partial UUID support)
-    const result = await client.query(
-      `UPDATE attendees 
-       SET admitted_at = NOW(), admitted_by = $1 
-       WHERE uuid = $2 
+    const result = await sql`
+      UPDATE attendees 
+       SET admitted_at = NOW(), admitted_by = ${deviceUID} 
+       WHERE uuid = ${attendee.uuid} 
          AND paid = TRUE 
          AND admitted_at IS NULL
-       RETURNING *`,
-      [deviceUID, attendee.uuid],
-    );
+       RETURNING *`;
 
-    if (result.rowCount === 0) {
-      await client.query("ROLLBACK");
+    if (result.length === 0) {
+      await sql.query("ROLLBACK");
       return NextResponse.json(
         { error: "Applicant is not eligible for admission." },
         { status: 400, headers: headers },
       );
     }
     // Commit transaction
-    await client.query("COMMIT");
+    await sql.query("COMMIT");
 
     return NextResponse.json(
-      { success: true, applicant: result.rows[0] },
+      { success: true, applicant: result[0] },
       { status: 200, headers: headers },
     );
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    await sql.query("ROLLBACK").catch(() => {});
     console.error("Error:", error);
     return NextResponse.json(
       { error: "An Error Occurred." },
       { status: 502, headers: headers },
     );
-  } finally {
-    client.release();
   }
 }
 
