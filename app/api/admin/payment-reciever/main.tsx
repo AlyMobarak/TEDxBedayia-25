@@ -582,6 +582,8 @@ export async function pay(
     }
   }
 
+  // Initialize a dedicated Client connection for the interactive payment transaction.
+  // FOR UPDATE row locks require all queries to run on the same database connection.
   const client = new Client(process.env.DATABASE_URL!);
   await client.connect();
 

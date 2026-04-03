@@ -137,7 +137,7 @@ export async function POST(req: NextRequest) {
 
       for (const attendee of attendees) {
         const { name, email, phone } = attendee;
-        const uuid = uuids.shift() ?? null;
+        const uuid = isPaid ? (uuids.shift() ?? null) : null;
 
         const res = await client.query(
           `INSERT INTO attendees (email, full_name, phone, type, payment_method, paid, uuid, sent)
