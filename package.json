@@ -41,7 +41,7 @@
     "@typescript-eslint/eslint-plugin": "^8.56.0",
     "@typescript-eslint/parser": "^8.56.0",
     "autoprefixer": "^10.4.24",
-    "dotenv": "^17.3.1",
+    "dotenv": "^17.4.0",
     "eslint": "^9.39.2",
     "eslint-config-next": "^16.1.6",
     "postcss": "^8",
