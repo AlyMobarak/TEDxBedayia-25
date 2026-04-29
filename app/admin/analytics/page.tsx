@@ -13,6 +13,7 @@ import {
   PieChart,
   ResponsiveContainer,
   Tooltip,
+  TooltipValueType,
   XAxis,
   YAxis,
 } from "recharts";
@@ -285,8 +286,8 @@ export default function AnalyticsDashboard() {
                   ))}
                 </Pie>
                 <Tooltip
-                  formatter={(value: number | undefined) =>
-                    `EGP ${(value ?? 0).toLocaleString()}`
+                  formatter={(value: TooltipValueType | undefined) =>
+                    `EGP ${Number(value ?? 0).toLocaleString()}`
                   }
                 />
               </PieChart>
@@ -319,7 +320,7 @@ export default function AnalyticsDashboard() {
                 const percentage =
                   data.overallStats.paidTickets > 0
                     ? Math.round(
-                        (pm.paidCount / data.overallStats.paidTickets) * 100
+                        (pm.paidCount / data.overallStats.paidTickets) * 100,
                       )
                     : 0;
                 return (
