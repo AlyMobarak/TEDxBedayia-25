@@ -171,7 +171,7 @@ P.S. If you ever need to edit the database schema, mention me (@AlyMobarak) on t
 1. **School Office** has a portal to accept cash payments by entering an attendee's email and the amount received.
 2. **Payment handlers** (admins or assigned users with specific payment method access) accept payments from their dashboard. They search by the sender's username/identifier. If multiple unpaid tickets match, the system returns an ambiguity response (HTTP 431) with a list of candidates for the admin to choose from.
 3. Upon successful payment acceptance, the system generates a unique UUID, assigns it to the ticket, records the payment in `pay_backup`, and sends an eTicket email with a QR code.
-4. **Card payments** are processed automatically via Paymob webhook — no manual acceptance needed.
+4. **Card payments** are processed manually through access to Bedayia's portal.
 
 ### Routes
 
@@ -187,7 +187,7 @@ P.S. If you ever need to edit the database schema, mention me (@AlyMobarak) on t
 | `/api/payment_processed/`                  | `GET`  | Client redirect after Paymob payment (success → `/book/success`, failure → `/book/failure`) |
 | `/api/qr/?uuid={uuid}`                     | `GET`  | QR code image generator                                                                     |
 
-> **⚠️ SECURITY NOTE**: The `/api/qr/` route is public — do NOT introduce any SQL checks verifying UUID validity, as that would enable brute-force attacks.
+> **⚠️ SECURITY NOTE**: The `/api/qr/` route is public — do NOT introduce any SQL checks verifying UUID validity, as that would enable brute-force attacks. It simply takes whatever is after the ?uuid= and puts it onto a qr code, no questions asked.
 
 ### Key Files
 
@@ -211,9 +211,9 @@ P.S. If you ever need to edit the database schema, mention me (@AlyMobarak) on t
 ## 4.3 Admitting into the Event
 
 1. People come in with their unique QR codes in print or on phone.
-2. Gate Ushers have access to a separate **Ushers App** (PWA) that scans QR codes and calls the admit API with an `APP_KEY`.
+2. Gate Ushers have access to a separate **Ushers App** that scans QR codes and calls the admit API with an `APP_KEY`.
 3. The system supports both **full UUID** (36 chars) and **partial UUID** (minimum 8 chars, prefix match) for admission.
-4. If the QR code has been already used, isn't paid for, or doesn't exist, the usher receives an error message. The head usher has access to the full admin dashboard for manual investigation.
+4. If the QR code has been already used, isn't paid for, or doesn't exist, the usher receives an error message. A head should have access to the full admin dashboard for manual investigation.
 5. On success, the attendee's name is shown and the usher admits them.
 6. **Row-level locking** (`SELECT ... FOR UPDATE`) prevents race conditions from concurrent scans.
 7. A **2.5-second grace window** allows the same device to re-scan without triggering a duplicate admission error (prevents iPhone double-scan glitches).
@@ -385,7 +385,7 @@ Generate free invitation tickets for speakers/vendors/etc.
 
 # 6. Marketing System
 
-The marketing system simplifies rush hour ticket sales. Marketing members can generate discount codes and submit rush hour tickets for people — even if they don't have an email memorized (via random code generation).
+The marketing system simplifies rush hour ticket sales. Marketing members can submit rush hour tickets for people or generate a random discount code if they don't have an email memorized.
 
 ### Routes
 
@@ -454,7 +454,7 @@ The system uses a **dual-provider email architecture**:
 
 - JWT tokens with 7-day expiry stored in cookies
 - Role-based access control with method-scoped permissions
-- Marketing member passwords generated via HMAC-SHA256 deterministic hashing
+- Marketing member passwords generated via HMAC-SHA256 deterministic hashing of their username
 
 ### Input Sanitization (`app/api/utils/input-sanitization.tsx`)
 
@@ -471,7 +471,7 @@ The system uses a **dual-provider email architecture**:
 
 ### Payment Security
 
-- Paymob HMAC SHA-512 verification on webhook callbacks
+- Paymob HMAC SHA-512 verification on webhook callbacks [unused for TEDx'26]
 - APP_KEY validation on usher endpoints
 - 36-hour event time window enforcement on admission and on-door endpoints
 
@@ -479,7 +479,7 @@ The system uses a **dual-provider email architecture**:
 
 # 9. Things to Maintain
 
-- **Domain Name**: [tedxbedayia.com](https://tedxbedayia.com) — renew around 31st of December.
+- **Domain Name**: [tedxbedayia.com](https://tedxbedayia.com) — renew around 31st of December on the Spaceship Domain Management System.
 - **Database**: Clear after last year's event from admin dashboard.
 - **Resend Account**: Ensure the API key and webhook secret are configured.
 - **Gmail Account**: OAuth2 credentials must be valid (used as email fallback + booking confirmations + speaker invitations).
@@ -505,7 +505,7 @@ The following are required in `.env` (or Vercel environment configuration, which
 | `MARKETING_MEMBER_PASSWORD_GEN`                                | Secret for generating marketing member passwords  |
 | `ALLOWED_ORIGINS`                                              | Additional CSRF-allowed origins (comma-separated) |
 
-P.S. If you ever need to add another environment variable or edit the database schema, mention me (@AlyMobarak) on the pull request that uses it or contact me on WhatsApp if you have my number.
+P.S. If you ever need to add/change an environment variable or edit the database schema, mention me (@AlyMobarak) on the pull request that uses it or contact me on WhatsApp if you have my number.
 
 ---
 
