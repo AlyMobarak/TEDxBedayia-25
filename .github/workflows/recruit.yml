@@ -43,7 +43,7 @@ jobs:
               core.setFailed(`⛔ Permission Denied: You must be a member of the @${org}/${team_slug} team to run this.`);
             }
 
-      - name: Send Organization Invite
+      - name: Send Organization Invite & Assign Team
         uses: actions/github-script@v6
         env:
           ORG_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
@@ -53,14 +53,32 @@ jobs:
           script: |
             const org = context.repo.owner;
             const email = process.env.NEW_EMAIL;
+            const target_team_slug = 'members';
 
-            console.log(`Inviting ${email} to ${org}...`);
+            console.log(`Fetching team ID for ${target_team_slug}...`);
+            let team_id;
+
+            try {
+              const team_response = await github.rest.teams.getByName({
+                org: org,
+                team_slug: target_team_slug,
+              });
+              team_id = team_response.data.id;
+              console.log(`✅ Found team ID: ${team_id}`);
+            } catch (error) {
+              console.log(`❌ Failed to find team: ${target_team_slug}`);
+              core.setFailed(`Could not find the target team. Ensure the slug '${target_team_slug}' is correct.`);
+              return;
+            }
+
+            console.log(`Inviting ${email} to ${org} and adding to team...`);
 
             try {
               await github.rest.orgs.createInvitation({
                 org: org,
                 email: email,
-                role: 'direct_member'
+                role: 'direct_member',
+                team_ids: [team_id]
               });
               console.log("✅ Invitation sent successfully!");
             } catch (error) {
