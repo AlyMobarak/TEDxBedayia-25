@@ -26,7 +26,7 @@
     "nodemailer": "^8.0.4",
     "qrcode": "^1.5.4",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4",
+    "react-dom": "^19.2.6",
     "recharts": "^3.7.0",
     "resend": "^6.9.2",
     "svix": "^1.92.2",
