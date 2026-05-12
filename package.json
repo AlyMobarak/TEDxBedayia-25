@@ -15,22 +15,22 @@
     "test:payment:all": "npm run test:payment && npm run test:payment:concurrent"
   },
   "dependencies": {
-    "@neondatabase/serverless": "^1.0.2",
-    "@react-email/components": "^1.0.8",
+    "@neondatabase/serverless": "^1.1.0",
+    "@react-email/components": "^1.0.12",
     "@tailwindcss/typography": "^0.5.19",
     "argon2": "^0.44.0",
     "framer-motion": "^12.38.0",
     "jsonwebtoken": "^9.0.3",
-    "lucide-react": "^1.7.0",
-    "next": "^16.1.7",
-    "nodemailer": "^8.0.4",
+    "lucide-react": "^1.14.0",
+    "next": "^16.2.6",
+    "nodemailer": "^8.0.7",
     "qrcode": "^1.5.4",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "recharts": "^3.7.0",
-    "resend": "^6.9.2",
-    "svix": "^1.92.2",
-    "swiper": "^12.1.2"
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "recharts": "^3.8.1",
+    "resend": "^6.12.3",
+    "svix": "^1.93.0",
+    "swiper": "^12.1.4"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.3",
